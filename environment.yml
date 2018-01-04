@@ -1,0 +1,28 @@
+name: ml
+channels:
+- pytorch
+- defaults
+- conda-forge
+- anaconda-fusion
+dependencies:
+- python
+- numpy
+- matplotlib
+- scikit-learn
+- scipy
+- tensorflow
+- keras
+- pytorch
+- ipython
+- opencv
+- pip
+- pip:
+  - gym[all]
+  - universe
+prefix: /Users/Jakob/anaconda/envs/ml
+
+
+# INSTALL GUIDE
+# $ conda env create -f ml.yml
+# $ cd dependencies/universe/
+# $ pip install e .
