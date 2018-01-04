@@ -20,9 +20,3 @@ dependencies:
   - gym[all]
   - universe
 prefix: /Users/Jakob/anaconda/envs/ml
-
-
-# INSTALL GUIDE
-# $ conda env create -f ml.yml
-# $ cd dependencies/universe/
-# $ pip install e .
