@@ -41,19 +41,60 @@ def selu(x):
     return scale * F.elu(x, alpha)
 
 
+class FFN(nn.Module):
+    """
+    FFN for classical control problems
+    """
+    def __init__(self, observation_space, action_space):
+        super(FFN, self).__init__()
+        assert hasattr(observation_space, 'shape') and len(observation_space.shape) == 1
+        assert hasattr(action_space, 'n')
+        in_dim = observation_space.shape[0]
+        out_dim = action_space.n
+        self.lin1 = nn.Linear(in_dim, 32)
+        self.lin2 = nn.Linear(32, 64)
+        self.lin3 = nn.Linear(64, 64)
+        self.lin4 = nn.Linear(64, 32)
+        self.lin5 = nn.Linear(32, out_dim)
+
+    def forward(self, x):
+        x = F.relu(self.lin1(x))
+        x = F.relu(self.lin2(x))
+        x = F.relu(self.lin3(x))
+        x = F.relu(self.lin4(x))
+        x = F.softmax(self.lin5(x), dim=1)
+        return x
+
+    def count_parameters(self):
+        count = 0
+        for param in self.parameters():
+            count += param.data.numpy().flatten().shape[0]
+        return count
+
+    def es_params(self):
+        """
+        The params that should be trained by ES (all of them)
+        """
+        return [(k, v) for k, v in zip(self.state_dict().keys(),
+                                       self.state_dict().values())]
+
+
 class DQN(nn.Module):
     """
     The CNN used by Mnih et al (2015)
     """
     def __init__(self, observation_space, action_space):
         super(DQN, self).__init__()
+        assert hasattr(observation_space, 'shape') and len(observation_space.shape) == 3
+        assert hasattr(action_space, 'n')
         in_channels = observation_space.shape[0]
         out_dim = action_space.n
         self.conv1 = nn.Conv2d(in_channels, out_channels=32, kernel_size=(8, 8), stride=(4, 4))
         self.conv2 = nn.Conv2d(32, out_channels=64, kernel_size=(4, 4), stride=(2, 2))
         self.conv3 = nn.Conv2d(64, out_channels=64, kernel_size=(3, 3), stride=(1, 1))
         n_size = self._get_conv_output(observation_space.shape)
-        self.head = nn.Linear(n_size, out_dim)
+        self.lin1 = nn.Linear(n_size, 512)
+        self.lin2 = nn.Linear(512, out_dim)
         
         # in_channels = observation_space.shape[0]
         # self.conv1 = nn.Conv2d(in_channels, 16, kernel_size=5, stride=2)
@@ -67,12 +108,9 @@ class DQN(nn.Module):
     def forward(self, x):
         x = self._forward_features(x)
         x = x.view(x.size(0), -1)
-        x = F.softmax(self.head(x), dim=1)
+        x = F.relu(self.lin1(x))
+        x = F.softmax(self.lin2(x), dim=1)
         return x
-
-        # x = F.relu(self.bn1(self.conv1(x)))
-        # x = F.relu(self.bn2(self.conv2(x)))
-        # x = F.relu(self.bn3(self.conv3(x)))
 
     def _get_conv_output(self, shape):
         """ Compute the number of output parameters from convolutional part by forward pass"""
@@ -88,6 +126,19 @@ class DQN(nn.Module):
         x = F.relu(self.conv3(x))
         return x
 
+    def count_parameters(self):
+        count = 0
+        for param in self.parameters():
+            count += param.data.numpy().flatten().shape[0]
+        return count
+
+    def es_params(self):
+        """
+        The params that should be trained by ES (all of them)
+        """
+        return [(k, v) for k, v in zip(self.state_dict().keys(),
+                                       self.state_dict().values())]
+
 
 class MujocoFFN(nn.Module):
     """
@@ -96,18 +147,10 @@ class MujocoFFN(nn.Module):
     def __init__(self, observation_space, action_space):
         super(DQN, self).__init__()
         self.full1 = nn.Linear(observation_space.shape, 2)
-        self.bn1 = nn.BatchNorm2d(16)
-        self.conv2 = nn.Conv2d(16, 32, kernel_size=5, stride=2)
-        self.bn2 = nn.BatchNorm2d(32)
-        self.conv3 = nn.Conv2d(32, 32, kernel_size=5, stride=2)
-        self.bn3 = nn.BatchNorm2d(32)
-        self.head = nn.Linear(448, 2)
 
     def forward(self, x):
-        x = F.relu(self.bn1(self.conv1(x)))
-        x = F.relu(self.bn2(self.conv2(x)))
-        x = F.relu(self.bn3(self.conv3(x)))
-        return self.head(x.view(x.size(0), -1))
+        x = x
+        return None
 
 
 class ES(nn.Module):
