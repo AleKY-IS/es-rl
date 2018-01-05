@@ -95,15 +95,6 @@ class DQN(nn.Module):
         n_size = self._get_conv_output(observation_space.shape)
         self.lin1 = nn.Linear(n_size, 512)
         self.lin2 = nn.Linear(512, out_dim)
-        
-        # in_channels = observation_space.shape[0]
-        # self.conv1 = nn.Conv2d(in_channels, 16, kernel_size=5, stride=2)
-        # self.bn1 = nn.BatchNorm2d(16)
-        # self.conv2 = nn.Conv2d(16, 32, kernel_size=5, stride=2)
-        # self.bn2 = nn.BatchNorm2d(32)
-        # self.conv3 = nn.Conv2d(32, 32, kernel_size=5, stride=2)
-        # self.bn3 = nn.BatchNorm2d(32)
-        # self.head = nn.Linear(448, 2)
 
     def forward(self, x):
         x = self._forward_features(x)
@@ -154,7 +145,6 @@ class MujocoFFN(nn.Module):
 
 
 class ES(nn.Module):
-
     def __init__(self, num_inputs, action_space, small_net=False):
         """
         Really I should be using inheritance for the small_net here
