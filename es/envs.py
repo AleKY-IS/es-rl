@@ -11,7 +11,7 @@ import cv2
 
 import IPython
 
-
+# TODO: To circumvent universe, make rescale class for Atari, make normalize class wrapper
 # TODO: Make create_env function for atari, classical control, mujoco etc.
 def create_env(env_id, **kwargs):
     spec = gym.spec(env_id)
@@ -39,21 +39,6 @@ def create_mujoco_env(env_id):
     return env
 
 
-def _process_frame(frame, square_size=42):
-    frame = frame[34:34 + 160, :160]
-    # Resize by half, then down to 42x42 (essentially mipmapping). If
-    # we resize directly we lose pixels that, when mapped to 42x42,
-    # aren't close enough to the pixel boundary.
-    if square_size < 80:
-        frame = cv2.resize(frame, (80, 80))
-    frame = cv2.resize(frame, (square_size, square_size))
-    frame = frame.mean(2)
-    frame = frame.astype(np.float32)
-    frame *= (1.0 / 255.0)
-    frame = np.reshape(frame, [1, square_size, square_size])
-    return frame
-
-
 class AtariRescale(vectorized.ObservationWrapper):
 
     def __init__(self, env=None, square_size=42):
@@ -63,6 +48,20 @@ class AtariRescale(vectorized.ObservationWrapper):
 
     def _observation(self, observation_n):
         return [_process_frame(observation, square_size=self.square_size) for observation in observation_n]
+
+    def _process_frame(frame, square_size=42):
+        frame = frame[34:34 + 160, :160]
+        # Resize by half, then down to 42x42 (essentially mipmapping). If
+        # we resize directly we lose pixels that, when mapped to 42x42,
+        # aren't close enough to the pixel boundary.
+        if square_size < 80:
+            frame = cv2.resize(frame, (80, 80))
+        frame = cv2.resize(frame, (square_size, square_size))
+        frame = frame.mean(2)
+        frame = frame.astype(np.float32)
+        frame *= (1.0 / 255.0)
+        frame = np.reshape(frame, [1, square_size, square_size])
+        return frame
 
 
 def DiagnosticsInfo(env, *args, **kwargs):
