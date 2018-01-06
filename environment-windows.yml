@@ -20,7 +20,7 @@ dependencies:
 #- pip:
 #  - gym[all]
 #  - universe
-prefix: /Users/Jakob/anaconda/envs/ml
+#prefix: /Users/Jakob/Anaconda3/envs/ml
 
 # INSTALLATION GUIDE
 # 1. conda create -n ml python six numpy
