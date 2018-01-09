@@ -1,0 +1,32 @@
+name: ml
+channels:
+- pytorch
+- defaults
+- conda-forge
+- anaconda-fusion
+dependencies:
+- python
+- numpy>=1.13       # version due to universe, due to go_vncdriver
+- matplotlib
+- scikit-learn
+- scipy
+- tensorflow
+- keras
+- pytorch
+- ipython
+- opencv
+- pip
+- pip:
+  - gym[all]
+  - universe
+prefix: /home/jakob/anaconda3/envs/ml
+
+# Requires the following packages
+# 
+#   $sudo apt-get install build-essential cmake swig libjpeg-turbo8-dev zlib1g-dev
+# 
+# build-essential       Installs gcc and g++ compilers
+# cmake                 Installs cmake tool to compile c
+# swig                  Installs swig.exe
+# libjpeg-turbo8-dev    
+# zlib1g-dev            

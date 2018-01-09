@@ -4,7 +4,6 @@ channels:
 - defaults
 - conda-forge
 - anaconda-fusion
-- peterjc123
 dependencies:
 - python
 - numpy>=1.13       # version due to universe, due to go_vncdriver

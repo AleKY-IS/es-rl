@@ -1,0 +1,33 @@
+name: ml
+channels:
+- pytorch
+- defaults
+- conda-forge
+- anaconda-fusion
+- peterjc123        # For pytorch
+dependencies:
+- python
+- numpy
+- matplotlib
+- scikit-learn
+- scipy
+- tensorflow
+- keras
+- pytorch
+- ipython
+- opencv
+- pip
+#- pip:
+#  - gym[all]
+#  - universe
+#prefix: /Users/Jakob/Anaconda3/envs/ml
+
+# INSTALLATION GUIDE
+# 1. conda create -n ml python six numpy
+# 2. pip install --no-index -f https://github.com/Kojoley/atari-py/releases atari_py
+# 3. conda env update --f environment-windows.yml
+
+# NOTES
+# Add peterjc123 channel for Windows supported pytorch version
+# Install atari-py version with Windows support from 
+#   $pip install --no-index -f https://github.com/Kojoley/atari-py/releases atari_py 
