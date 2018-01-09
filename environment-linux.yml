@@ -1,0 +1,22 @@
+name: ml
+channels:
+- pytorch
+- defaults
+- conda-forge
+- anaconda-fusion
+dependencies:
+- python
+- numpy>=1.13       # version due to universe, due to go_vncdriver
+- matplotlib
+- scikit-learn
+- scipy
+- tensorflow
+- keras
+- pytorch
+- ipython
+- opencv
+- pip
+- pip:
+  - gym[all]
+  - universe
+prefix: /home/jakob/anaconda3/envs/ml
