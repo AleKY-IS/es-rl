@@ -1,42 +1,33 @@
 import torch
+import torch.nn.functional as F
 from torch.autograd import Variable
+
 import IPython
 
 
-def gym_rollout(args, models, random_seeds, return_queue, env, is_antithetic):
+def gym_rollout(args, model, random_seed, return_queue, env, is_antithetic):
     """
-    Do rollouts of policy defined by model in given environment. 
-    Has support for multiple models per thread, but it is inefficient.
+    Function to do rollouts of a policy defined by `model` in given environment
     """
-    all_returns = []
-    all_num_frames = []
-    for model in models:
-        # Reset environment
-        state = env.reset()
+    # Reset environment
+    state = env.reset()
+    state = Variable(torch.from_numpy(state).float(), requires_grad=True).unsqueeze(0)
+    retrn = 0
+    nsteps = 0
+    done = False
+    # Rollout
+    while not done and nsteps < args.max_episode_length:
+        # Choose action
+        actions = model(state)
+        action = actions.max(1)[1].data.numpy()
+        # Step
+        state, reward, done, _ = env.step(action[0])
+        retrn += reward
+        nsteps += 1
+        # Cast state
         state = Variable(torch.from_numpy(state).float(), requires_grad=True).unsqueeze(0)
-        this_model_return = 0
-        this_model_num_frames = 0
-        done = False
-        # Rollout
-        while not done and this_model_num_frames < args.max_episode_length:
-            # Choose action
-            actions = model(state)
-            action = actions.max(1)[1].data.numpy()
-            # Step
-            state, reward, done, _ = env.step(action[0])
-            this_model_return += reward
-            this_model_num_frames += 1
-            # Cast state
-            state = Variable(torch.from_numpy(state).float(), requires_grad=True).unsqueeze(0)
-            
-            print(state.requires_grad)
-            print(state.grad)
-            state.backward(torch.ones(state.shape))
-            print(state.grad)
-
-        all_returns.append(this_model_return)
-        all_num_frames.append(this_model_num_frames)
-    return_queue.put((random_seeds, all_returns, all_num_frames, is_antithetic))
+    #return_queue.put((random_seeds, all_returns, all_num_steps, is_antithetic))
+    return_queue.put({'seed': random_seed, 'return': retrn, 'is_anti': is_antithetic, 'nsteps': nsteps})
 
 
 def gym_render(args, model, env):
@@ -49,17 +40,17 @@ def gym_render(args, model, env):
             state = env.reset()
             state = Variable(torch.from_numpy(state).float(), volatile=True).unsqueeze(0)
             this_model_return = 0
-            this_model_num_frames = 0
+            this_model_num_steps = 0
             done = False
             # Rollout
-            while not done and this_model_num_frames < args.max_episode_length:
+            while not done and this_model_num_steps < args.max_episode_length:
                 # Choose action
                 actions = model(state)
                 action = actions.max(1)[1].data.numpy()
                 # Step
                 state, reward, done, _ = env.step(action[0])
                 this_model_return += reward
-                this_model_num_frames += 1
+                this_model_num_steps += 1
                 # Cast state
                 state = Variable(torch.from_numpy(state).float(), volatile=True).unsqueeze(0)
                 env.render()
@@ -68,42 +59,82 @@ def gym_render(args, model, env):
         print("\nEnded test session by keyboard interrupt")
 
 
-def gym_rollout_nogradients(args, models, random_seeds, return_queue, env, is_antithetic):
+def gym_rollout_gradients(args, models, random_seeds, return_queue, env, is_antithetic):
     """
     Do rollouts of policy defined by model in given environment. 
     Has support for multiple models per thread, but it is inefficient.
     """
     all_returns = []
-    all_num_frames = []
+    all_num_steps = []
     for model in models:
         # Reset environment
         state = env.reset()
         state = Variable(torch.from_numpy(state).float(), volatile=True).unsqueeze(0)
         this_model_return = 0
-        this_model_num_frames = 0
+        this_model_num_steps = 0
         done = False
         # Rollout
-        while not done and this_model_num_frames < args.max_episode_length:
+        while not done and this_model_num_steps < args.max_episode_length:
             # Choose action
             actions = model(state)
             action = actions.max(1)[1].data.numpy()
             # Step
             state, reward, done, _ = env.step(action[0])
             this_model_return += reward
-            this_model_num_frames += 1
+            this_model_num_steps += 1
             # Cast state
             state = Variable(torch.from_numpy(state).float(), volatile=True).unsqueeze(0)
 
+            print(state.requires_grad)
+            print(state.grad)
+            state.backward(torch.ones(state.shape))
+            print(state.grad)
+
         all_returns.append(this_model_return)
-        all_num_frames.append(this_model_num_frames)
+        all_num_steps.append(this_model_num_steps)
 
-    return_queue.put((random_seeds, all_returns, all_num_frames, is_antithetic))
-
-
+    return_queue.put((random_seeds, all_returns, all_num_steps, is_antithetic))
 
 
-def supervised_fitness(args, models, random_seeds, return_queue, env, is_antithetic):
+def supervised_eval(args, model, random_seed, return_queue, train_data_loader, is_antithetic):
+    """
+    Function to evaluate the fitness of a supervised model.
+
+    For supervised training, the training data set loader is viewed as the "environment"
+    and is passed in the env variable (train_data_loader).
+    """
+    print(next(iter(data_loader)))
+    (data, target) = next(iter(data_loader))
+    print(data)
+    print(target)
+    
+    if args.cuda:
+        data, target = data.cuda(), target.cuda()
+    data, target = Variable(data), Variable(target)
+    output = model(data)
+    loss = -F.nll_loss(output, target)
+
+    assert 2 == 1
+    return_queue.put({'seed': random_seed, 'return': loss, 'is_anti': is_antithetic, 'nsteps': nsteps})
 
 
+def supervised_test(args, model, test_loader):
+    """
+    Function to test the performance of a supervised classification model
+    """
+    model.eval()
+    test_loss = 0
+    correct = 0
+    for data, target in test_loader:
+        if args.cuda:
+            data, target = data.cuda(), target.cuda()
+        data, target = Variable(data, volatile=True), Variable(target)
+        output = model(data)
+        test_loss += F.nll_loss(output, target, size_average=False).data[0] # sum up batch loss
+        pred = output.data.max(1, keepdim=True)[1] # get the index of the max log-probability
+        correct += pred.eq(target.data.view_as(pred)).cpu().sum()
 
-    return_queue.put((random_seeds, all_returns, all_num_frames, is_antithetic))
+    test_loss /= len(test_loader.dataset)
+    print('Average loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)\n'.format(
+        test_loss, correct, len(test_loader.dataset),
+        100. * correct / len(test_loader.dataset)))

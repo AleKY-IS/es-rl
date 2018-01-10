@@ -43,9 +43,9 @@ train_loader = torch.utils.data.DataLoader(
     batch_size=args.batch_size, shuffle=True, **kwargs)
 test_loader = torch.utils.data.DataLoader(
     datasets.MNIST('./data', train=False, transform=transforms.Compose([
-                       transforms.ToTensor(),
-                       transforms.Normalize((0.1307,), (0.3081,))
-                   ])),
+        transforms.ToTensor(),
+        transforms.Normalize((0.1307,), (0.3081,))
+    ])),
     batch_size=args.test_batch_size, shuffle=True, **kwargs)
 
 
@@ -65,7 +65,7 @@ class Net(nn.Module):
         x = self.conv2_drop(self.conv2_bn(F.relu(F.max_pool2d(self.conv2(x), 2))))
         x = x.view(-1, 320)
         x = F.relu(F.dropout(self.fc1(x), training=self.training))
-        x = F.log_softmax(self.fc2(x))
+        x = F.log_softmax(self.fc2(x), dim=1)
         return x
 
 model = Net()
@@ -112,6 +112,6 @@ def test():
 
 
 for epoch in range(1, args.epochs + 1):
-    train(epoch)
     test()
+    train(epoch)
     torch.save(model.state_dict(), 'latest.state')
