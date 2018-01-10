@@ -9,40 +9,21 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 
 
-def normalized_columns_initializer(weights, std=1.0):
-    out = torch.randn(weights.size())
-    out *= std / torch.sqrt(out.pow(2).sum(1).expand_as(out))
-    return out
+class AbstractESModel(nn.Module):
+    def count_parameters(self):
+        count = 0
+        for param in self.parameters():
+            count += param.data.numpy().flatten().shape[0]
+        return count
+
+    def es_parameters(self):
+        """
+        The params that should be trained by ES (all of them)
+        """
+        return [param for param in self.parameters()]
 
 
-def weights_init(m):
-    """
-    Not actually using this but let's keep it here in case that changes
-    """
-    classname = m.__class__.__name__
-    if classname.find('Conv') != -1:
-        weight_shape = list(m.weight.data.size())
-        fan_in = np.prod(weight_shape[1:4])
-        fan_out = np.prod(weight_shape[2:4]) * weight_shape[0]
-        w_bound = np.sqrt(6. / (fan_in + fan_out))
-        m.weight.data.uniform_(-w_bound, w_bound)
-        m.bias.data.fill_(0)
-    elif classname.find('Linear') != -1:
-        weight_shape = list(m.weight.data.size())
-        fan_in = weight_shape[1]
-        fan_out = weight_shape[0]
-        w_bound = np.sqrt(6. / (fan_in + fan_out))
-        m.weight.data.uniform_(-w_bound, w_bound)
-        m.bias.data.fill_(0)
-
-
-def selu(x):
-    alpha = 1.6732632423543772848170429916717
-    scale = 1.0507009873554804934193349852946
-    return scale * F.elu(x, alpha)
-
-
-class FFN(nn.Module):
+class FFN(AbstractESModel):
     """
     FFN for classical control problems
     """
@@ -66,21 +47,14 @@ class FFN(nn.Module):
         x = F.softmax(self.lin5(x), dim=1)
         return x
 
-    def count_parameters(self):
-        count = 0
-        for param in self.parameters():
-            count += param.data.numpy().flatten().shape[0]
-        return count
-
-    def es_params(self):
+    def es_parameters(self):
         """
         The params that should be trained by ES (all of them)
         """
-        return [(k, v) for k, v in zip(self.state_dict().keys(),
-                                       self.state_dict().values())]
+        return [param for param in self.parameters()]
 
 
-class DQN(nn.Module):
+class DQN(AbstractESModel):
     """
     The CNN used by Mnih et al (2015)
     """
@@ -118,21 +92,8 @@ class DQN(nn.Module):
         x = F.relu(self.conv3(x))
         return x
 
-    def count_parameters(self):
-        count = 0
-        for param in self.parameters():
-            count += param.data.numpy().flatten().shape[0]
-        return count
 
-    def es_params(self):
-        """
-        The params that should be trained by ES (all of them)
-        """
-        return [(k, v) for k, v in zip(self.state_dict().keys(),
-                                       self.state_dict().values())]
-
-
-class MujocoFFN(nn.Module):
+class MujocoFFN(AbstractESModel):
     """
     The FFN used by Salismans (2017)
     """
@@ -145,7 +106,7 @@ class MujocoFFN(nn.Module):
         return None
 
 
-class MNISTNet(nn.Module):
+class MNISTNet(AbstractESModel):
     """ 
     Convolutional neural network for use on the MNIST data set
     """
@@ -169,16 +130,3 @@ class MNISTNet(nn.Module):
         x = F.relu(self.fc1(x))
         x = F.log_softmax(self.fc2(x), dim=1)
         return x
-
-    def count_parameters(self):
-        count = 0
-        for param in self.parameters():
-            count += param.data.numpy().flatten().shape[0]
-        return count
-
-    def es_params(self):
-        """
-        The params that should be trained by ES (all of them)
-        """
-        return [(k, v) for k, v in zip(self.state_dict().keys(),
-                                       self.state_dict().values())]
