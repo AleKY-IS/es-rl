@@ -13,6 +13,7 @@ dependencies:
 - tensorflow
 - keras
 - pytorch
+- torchvision
 - ipython
 - opencv
 - pip
