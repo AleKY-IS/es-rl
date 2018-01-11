@@ -18,7 +18,7 @@ from torch.autograd import Variable
 from context import es
 from es.envs import create_atari_env
 
-ts = time.clock()
+
 class FFN(nn.Module):
     """
     FFN for classical control problems
@@ -97,7 +97,7 @@ class DQN(nn.Module):
         return x
 
 
-def gym_rollout(max_episode_length, model, random_seed, return_queue, env, is_antithetic):
+def gym_rollout(max_episode_length, model, random_seed, env, is_antithetic):
     """
     Function to do rollouts of a policy defined by `model` in given environment
     """
@@ -120,11 +120,10 @@ def gym_rollout(max_episode_length, model, random_seed, return_queue, env, is_an
         # Cast state
         state = Variable(torch.from_numpy(state).float(),
                          requires_grad=True).unsqueeze(0)
-    return_queue.put({'seed': random_seed, 'return': retrn,
-                      'is_anti': is_antithetic, 'nsteps': nsteps})
 
 
 for acti in ['relu', 'softmax']:
+    ts = time.clock()
     n = 1000
     env = gym.make('CartPole-v0')
     #env = create_atari_env('Freeway-v0')
@@ -132,10 +131,10 @@ for acti in ['relu', 'softmax']:
     model = FFN(env.observation_space, env.action_space, acti)
 
     for i in range(n):
-        gym_rollout(1000, model, 'dummy_seed', return_queue, env, 'dummy_neg')
+        gym_rollout(1000, model, 'dummy_seed', env, 'dummy_neg')
 
     # Get results of finished processes
-    raw_output = [return_queue.get() for _ in range(return_queue.qsize())]
+    #raw_output = [return_queue.get() for _ in range(return_queue.qsize())]
     tf = time.clock()
     print(acti + " total: " + str(tf-ts))
     print(acti + " per call: " + str((tf - ts) / n))
