@@ -10,20 +10,20 @@ def gym_rollout(args, model, random_seed, return_queue, env, is_antithetic):
     Function to do rollouts of a policy defined by `model` in given environment
     """
     # Reset environment
-    print("Work started")
-    model_time = 0
+    # print("Work started")
+    # model_time = 0
     state = env.reset()
     state = Variable(torch.from_numpy(state).float(), requires_grad=True).unsqueeze(0)
     retrn = 0
     nsteps = 0
     done = False
     # Rollout
-    total_time = time.clock()
+    # total_time = time.clock()
     while not done and nsteps < args.max_episode_length:
         # Choose action
-        model_time_start = time.clock()
+        # model_time_start = time.clock()
         actions = model(state)
-        model_time += time.clock() - model_time_start
+        # model_time += time.clock() - model_time_start
         action = actions.max(1)[1].data.numpy()
         # print("test")
         # Step
@@ -33,10 +33,10 @@ def gym_rollout(args, model, random_seed, return_queue, env, is_antithetic):
         # Cast state
         state = Variable(torch.from_numpy(state).float(), requires_grad=True).unsqueeze(0)
         # print("iter " + str(nsteps))
-    total_time = time.clock() - total_time
+    # total_time = time.clock() - total_time
     #return_queue.put((random_seeds, all_returns, all_num_steps, is_antithetic))
     return_queue.put({'seed': random_seed, 'return': retrn, 'is_anti': is_antithetic, 'nsteps': nsteps})
-    print("Work ended " + str(nsteps) + " tot: " + str(total_time) + " mod: " + str(model_time))
+    # print("Work ended " + str(nsteps) + " tot: " + str(total_time) + " mod: " + str(model_time))
 
 
 def gym_render(args, model, env):
@@ -68,65 +68,25 @@ def gym_render(args, model, env):
         print("\nEnded test session by keyboard interrupt")
 
 
-def gym_rollout_gradients(args, models, random_seeds, return_queue, env, is_antithetic):
-    """
-    Do rollouts of policy defined by model in given environment. 
-    Has support for multiple models per thread, but it is inefficient.
-    """
-    all_returns = []
-    all_num_steps = []
-    for model in models:
-        # Reset environment
-        state = env.reset()
-        state = Variable(torch.from_numpy(state).float(), volatile=True).unsqueeze(0)
-        this_model_return = 0
-        this_model_num_steps = 0
-        done = False
-        # Rollout
-        while not done and this_model_num_steps < args.max_episode_length:
-            # Choose action
-            actions = model(state)
-            action = actions.max(1)[1].data.numpy()
-            # Step
-            state, reward, done, _ = env.step(action[0])
-            this_model_return += reward
-            this_model_num_steps += 1
-            # Cast state
-            state = Variable(torch.from_numpy(state).float(), volatile=True).unsqueeze(0)
-
-            print(state.requires_grad)
-            print(state.grad)
-            state.backward(torch.ones(state.shape))
-            print(state.grad)
-
-        all_returns.append(this_model_return)
-        all_num_steps.append(this_model_num_steps)
-
-    return_queue.put((random_seeds, all_returns, all_num_steps, is_antithetic))
-
-
-def supervised_eval(args, model, random_seed, return_queue, train_loader, is_antithetic):
+def supervised_eval(args, model, random_seed, return_queue, train_loader, is_antithetic, collect_inputs=False):
     """
     Function to evaluate the fitness of a supervised model.
 
     For supervised training, the training data set loader is viewed as the "environment"
     and is passed in the env variable (train_loader).
     """
-    #print(next(iter(train_loader)))
     (data, target) = next(iter(train_loader))
-    #print(data)
-    #print(target)
-    
-    #if args.cuda:
-    #    data, target = data.cuda(), target.cuda()
     data, target = Variable(data), Variable(target)
     output = model(data)
-    print("before")
-    loss = -F.nll_loss(output, target)
-    print("after")
-
-    assert 2 == 1
-    return_queue.put({'seed': random_seed, 'return': loss, 'is_anti': is_antithetic, 'nsteps': nsteps})
+    pred = output.data.max(1, keepdim=True)[1] # get the index of the max log-probability
+    correct_ratio = pred.eq(target.data.view_as(pred)).sum()/target.data.size()[0]
+    #reward = -F.nll_loss(output, target)
+    #reward.data.numpy()[0]
+    out = {'seed': random_seed, 'return': correct_ratio, 'is_anti': is_antithetic, 'nsteps': args.batch_size}
+    if collect_inputs:
+        out['inputs'] = data
+    return_queue.put(out)
+    #print(correct_ratio)
 
 
 def supervised_test(args, model, test_loader):

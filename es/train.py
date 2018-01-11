@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 import torch
+import torch.optim
 import torch.legacy.optim as legacyOptim
 import torch.multiprocessing as mp
 import torch.nn.functional as F
@@ -17,24 +18,26 @@ from torch import nn
 import gym
 
 
-def perturb_model(args, model, random_seed, env):
+def perturb_model(args, parent_model, random_seed, env):
     """
     Modifies the given model with a pertubation of its parameters,
     as well as the mirrored perturbation, and returns both perturbed
     models.
     """
     # Get model class and instantiate two new models as copies of parent
-    model_class = type(model)
+    model_class = type(parent_model)
     model1 = model_class(env.observation_space, env.action_space) if hasattr(env, 'observation_space') else model_class()
     model2 = model_class(env.observation_space, env.action_space) if hasattr(env, 'observation_space') else model_class()
-    model1.load_state_dict(model.state_dict())
-    model2.load_state_dict(model.state_dict())
+    model1.load_state_dict(parent_model.state_dict())
+    model2.load_state_dict(parent_model.state_dict())
     np.random.seed(random_seed)
     # Permute all weights of each model by isotropic Gaussian noise
-    for param1, param2 in zip(model1.es_parameters(), model2.es_parameters()):
-        eps = np.random.normal(0, 1, param1.data.size())
-        param1.data += torch.from_numpy(args.sigma*eps).float()
-        param2.data += torch.from_numpy(args.sigma*-eps).float()
+    for param1, param2, pp in zip(model1.es_parameters(), model2.es_parameters(), parent_model.es_parameters()):
+        eps = torch.from_numpy(np.random.normal(0, 1, param1.data.size())).float()
+        delta1 = eps#/pp.grad.data
+        delta2 = -eps#/pp.grad.data
+        param1.data += args.sigma*delta1#/delta1.std()
+        param2.data += args.sigma*delta2#/delta2.std()
 
     return [model1, model2]
 
@@ -67,9 +70,7 @@ def unperturbed_rank(returns, unperturbed_results):
     for r in returns:
         if r > unperturbed_results:
             nth_place += 1
-    rank_diag = ('%d out of %d (1 means gradient '
-                    'is uninformative)' % (nth_place,
-                                            len(returns) + 1))
+    rank_diag = ('%d out of %d (1 means gradient is uninformative)' % (nth_place, len(returns) + 1))
     return rank_diag, nth_place
 
 
@@ -101,16 +102,85 @@ reward_var = []
 episodes = []
 
 
-def gradient_update(args, parent_model, returns, random_seeds, is_anti_list):
+def compute_sensitivities(parent_model, inputs=None):
+    if inputs is not None:
+        outputs = parent_model(inputs)
+        parent_model.zero_grad()
+        do_square = False
+        do_square_root = False
+        do_abs = True
+        do_squash = False
+        # Sum over outputs
+        for idx in range(outputs.data.size()[1]):  # for each output dimension
+            t = torch.zeros(outputs.data.size()[0], outputs.data.size()[1])
+            t[:, idx] = torch.ones(outputs.data.size()[0], 1)
+            outputs.backward(t, retain_graph=True)
+
+            if do_square: # (SM-G-SUM)
+                for param in parent_model.parameters():
+                    param.grad = param.grad.pow(2)
+
+            if do_abs: # 
+                for param in parent_model.parameters():
+                    param.grad = param.grad.abs()
+
+        if do_square_root: # (SM-G-SUM)
+            for param in parent_model.parameters():
+                param.grad = param.grad.sqrt()
+
+        # Add small number so as not to divide by zero
+
+        if do_squash:
+            for param in parent_model.parameters():
+                param.grad = param.grad/param.grad.max()
+
+        for param in parent_model.parameters():
+            param.grad.data[param.grad.data == 0] = 1
+            param.grad.data += 10**-3
+    return parent_model
+
+
+def gradient_update(args, parent_model, returns, inputs, optimizer, random_seeds, is_anti_list):
     # Verify input
     batch_size = len(returns)
     assert batch_size == args.n
     assert len(random_seeds) == batch_size
-    
+
     # Shape returns and get rank of unperturbed model
     shaped_returns = fitness_shaping(returns)
 
 
+
+    # # TODO: Always use an optimizer to step on the computed gradients
+    # # Compute gradients
+    # gradients = []
+    # for param in parent_model.parameters():
+    #     gradients.append(torch.zeros(param.data.size()))
+    # for i in range(args.n):
+    #     # Set random seed, get antithetic multiplier and reward
+    #     np.random.seed(random_seeds[i])
+    #     multiplier = -1 if is_anti_list[i] else 1
+    #     reward = shaped_returns[i]
+    #     for layer, param in enumerate(parent_model.parameters()):
+    #         eps = np.random.normal(0, 1, param.data.size())
+    #         gradients[layer] += (torch.from_numpy((args.n*args.sigma) * (reward*multiplier*eps)).float())
+    #         #gradients[layer] += torch.from_numpy(eps).float()
+
+    # # Set gradients
+    # for layer, param in enumerate(parent_model.parameters()):
+    #     param.grad.data = gradients[layer]
+    #     #print(param.grad.data)
+    #     #print(gradients[layer])
+    #     # if inputs is not None:
+    #     #     param.grad.data = gradients[layer]/param.grad.data
+    #     # else:
+    #     #     param.grad.data = gradients[layer]
+        
+    # # Step with optimizer
+    # optimizer.step()
+
+
+    
 
     # For each model, generate the same random numbers as we did
     # before, and update parameters. We apply weight decay once.
@@ -148,7 +218,8 @@ def gradient_update(args, parent_model, returns, random_seeds, is_anti_list):
     #     # Optimize parameters
     #     optimizer.step()
 
-    if args.useAdam:
+
+    if args.optimizer == 'Adam':
         globalGrads = None
         for i in range(args.n):
             np.random.seed(random_seeds[i])
@@ -200,7 +271,7 @@ def gradient_update(args, parent_model, returns, random_seeds, is_anti_list):
 #       -   for j in range(int(args.n/2)):
 #       -       inputs.append((args, perturbed_model, seed, return_queue, env, is_negative))
 #       -   p.imap_unordered(eval_fun, args=inputs) 
-def train_loop(args, parent_model, env, eval_fun, chkpt_dir):
+def train_loop(args, parent_model, env, eval_fun, optimizer, chkpt_dir):
     # Print init
     print("Num params in network %d" % parent_model.count_parameters())
 
@@ -212,6 +283,13 @@ def train_loop(args, parent_model, env, eval_fun, chkpt_dir):
         processes, seeds, models = [], [], []
         return_queue = mp.Queue()
 
+        
+        # Evaluate parent model TODO: Move to after permutation, add to processes
+        eval_fun(args, parent_model, 'dummy_seed', return_queue, env, 'dummy_neg', collect_inputs=True)
+        unperturbed_out = return_queue.get()
+        # Compute parent model weight-output sensitivities
+        compute_sensitivities(parent_model, unperturbed_out['inputs'])
+        #IPython.embed()
         # Generate a perturbation and its antithesis
         # TODO: This could be be part of the parallel execution (somehow)
         for j in range(int(args.n/2)):
@@ -238,9 +316,9 @@ def train_loop(args, parent_model, env, eval_fun, chkpt_dir):
         assert len(seeds) == 0
 
         # Evaluate the unperturbed model as well
-        p = mp.Process(target=eval_fun, args=(args, parent_model, 'dummy_seed', return_queue, env, 'dummy_neg'))
-        p.start()
-        processes.append(p)
+        #p = mp.Process(target=eval_fun, args=(args, parent_model, 'dummy_seed', return_queue, env, 'dummy_neg'), kwargs={'collect_inputs': True})
+        #p.start()
+        #processes.append(p)
                 
         # Get output from processes until all are terminated
         # raw_output = []
@@ -264,33 +342,29 @@ def train_loop(args, parent_model, env, eval_fun, chkpt_dir):
 
         workers_end_time = time.clock()
 
-       #  IPython.embed()
-
         # Get results of finished processes
         raw_output = [return_queue.get() for p in processes]
-                
-        # Get all results
+        # Split into parts
         seeds = [out['seed'] for out in raw_output]
         returns = [out['return'] for out in raw_output]
         is_anti_list = [out['is_anti'] for out in raw_output]
         nsteps = [out['nsteps'] for out in raw_output]
-
-        #IPython.embed()
-        # Get results of unperturbed model and remove it from all results
-        unperturbed_index = seeds.index('dummy_seed')
-        unperturbed_out = raw_output.pop(unperturbed_index)
-        assert unperturbed_out['seed'] == 'dummy_seed'
-        seeds.pop(unperturbed_index)
-        returns.pop(unperturbed_index)
-        is_anti_list.pop(unperturbed_index)
-        nsteps.pop(unperturbed_index)
+        # # Get results of unperturbed model and remove it from all results
+        # unperturbed_index = seeds.index('dummy_seed')
+        # unperturbed_out = raw_output.pop(unperturbed_index)
+        # assert unperturbed_out['seed'] == 'dummy_seed'
+        # seeds.pop(unperturbed_index)
+        # returns.pop(unperturbed_index)
+        # is_anti_list.pop(unperturbed_index)
+        # nsteps.pop(unperturbed_index)
         
         #IPython.embed()
+        
         # Update gradient
         num_eps += len(returns)
-        parent_model = gradient_update(args, parent_model, returns, seeds, is_anti_list)
+        parent_model = gradient_update(args, parent_model, returns, unperturbed_out['inputs'], optimizer, seeds, is_anti_list)
 
-        if args.variable_ep_len:
+        if hasattr(args, 'variable_ep_len') and args.variable_ep_len:
             args.max_episode_length = int(5*max(num_frames))
 
         # Print to console
@@ -341,16 +415,14 @@ def train_loop(args, parent_model, env, eval_fun, chkpt_dir):
                 'Max reward: %f\n'
                 'Min reward: %f\n'
                 'Batch size: %d\n'
-                'Max episode length: %d\n'
                 'Sigma: %f\n'
                 'Learning rate: %f\n'
                 'Unperturbed reward: %f\n'
                 'Unperturbed rank: %s\n' 
-                'Using Adam: %r' %
+                'Optimizer: %s' %
                 (num_eps, reward_average[-1], reward_var[-1], reward_max[-1],
-                reward_min[-1], args.n,
-                args.max_episode_length, args.sigma, args.lr,
-                unperturbed_out['return'], rank_diag, args.useAdam))
+                reward_min[-1], args.n, args.sigma, args.lr,
+                unperturbed_out['return'], rank_diag, args.optimizer))
             print("Worker time: {}".format(workers_end_time-workers_start_time))
             print("Loop time: {}".format(loop_end_time-loop_start_time))
             print()

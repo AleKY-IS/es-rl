@@ -25,8 +25,9 @@ if __name__ == '__main__':
     parser.add_argument('--lr', type=float, default=0.1, metavar='LR', help='learning rate')
     parser.add_argument('--lr-decay', type=float, default=1, metavar='LRD', help='learning rate decay')
     parser.add_argument('--sigma', type=float, default=0.05, metavar='SD', help='noise standard deviation')
-    parser.add_argument('--useAdam', action='store_true', help='bool to determine if to use adam optimizer')
-    parser.add_argument('--n', type=int, default=40, metavar='N', help='batch size, must be even')
+    parser.add_argument('--optimizer', type=str, default='SGD', help='optimizer to use')
+    parser.add_argument('--n', type=int, default=40, metavar='N', help='number of children, must be even')
+    parser.add_argument('--batch-size', type=int, default=64, metavar='N', help='batch size')
     #parser.add_argument('--max-episode-length', type=int, default=10000, metavar='MEL', help='maximum length of an episode')
     parser.add_argument('--max-gradient-updates', type=int, default=100000, metavar='MGU', help='maximum number of updates')
     #parser.add_argument('--frame-size', type=int, default=84, metavar='FS', help='square size of frames in pixels')
@@ -51,7 +52,7 @@ if __name__ == '__main__':
                            transforms.ToTensor(),
                            transforms.Normalize((0.1307,), (0.3081,))
                        ])),
-        batch_size=args.n, shuffle=True, **kwargs)
+        batch_size=args.batch_size, shuffle=True, **kwargs)
     test_loader = torch.utils.data.DataLoader(
         datasets.MNIST('./data', train=False, transform=transforms.Compose([
             transforms.ToTensor(),
@@ -62,21 +63,38 @@ if __name__ == '__main__':
     # Create model
     parent_model = MNISTNet()
 
-    """
-    IPython.embed()
+    # Create optimizer
+    try:
+        opt_class = getattr(optim, args.optimizer)
+    except AttributeError:
+        print('Optimizer unrecognized, using SGD')
+        opt_class = optim.SGD
+    if opt_class is optim.SGD:
+        optimizer = opt_class(parent_model.parameters(), lr=args.lr)
+    else:
+        optimizer = opt_class(parent_model.parameters())
 
-    print(next(iter(train_loader)))
-    (data, target) = next(iter(train_loader))
-    print(data)
-    print(target)
+    # (data, target) = next(iter(train_loader))
+    #data, target = Variable(data), Variable(target)
+    #output = parent_model(data)
+    #IPython.embed()
+
+    # # Compute sensitivities by summing dy/dw
+    # parent_model.zero_grad()
+    # do_abs = True
+    # for idx in range(output.data.size()[1]):
+    #     t = torch.zeros(output.data.size()[0], output.data.size()[1])
+    #     t[:, idx] = torch.ones(output.data.size()[0], 1)
+    #     output.backward(t, retain_graph=True)
+    #     if do_abs:
+    #         for param in parent_model.parameters():
+    #             param.grad = param.grad.abs()
+    # for param in parent_model.parameters():
+    #     print(param.grad)
+    #     print(param.grad.sum())
     
-    if args.cuda:
-        data, target = data.cuda(), target.cuda()
-    data, target = Variable(data), Variable(target)
-    output = parent_model(data)
-    loss = -F.nll_loss(output, target)
-    """
-    
+
+
     # Create checkpoint directory if nonexistent
     chkpt_dir = 'checkpoints/%s/' % args.env_name
     if not os.path.exists(chkpt_dir):
@@ -95,4 +113,4 @@ if __name__ == '__main__':
     if args.test:
         supervised_test(args, parent_model, test_loader)
     else:
-        train_loop(args, parent_model, train_loader, supervised_eval, chkpt_dir)
+        train_loop(args, parent_model, train_loader, supervised_eval, optimizer, chkpt_dir)
