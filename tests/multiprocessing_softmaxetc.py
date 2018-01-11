@@ -15,7 +15,10 @@ from torch import nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 
+from context import es
+from es.envs import create_atari_env
 
+ts = time.clock()
 class FFN(nn.Module):
     """
     FFN for classical control problems
@@ -40,8 +43,53 @@ class FFN(nn.Module):
         x = F.relu(self.lin3(x))
         x = F.relu(self.lin4(x))
         x = F.log_softmax(self.lin5(x), dim=1)
+        #x = F.relu(self.lin5(x))
         print("did softmax")
-        # x = F.relu(self.lin5(x))
+        return x
+
+
+class DQN(nn.Module):
+    """
+    The CNN used by Mnih et al (2015)
+    """
+
+    def __init__(self, observation_space, action_space):
+        super(DQN, self).__init__()
+        assert hasattr(observation_space, 'shape') and len(
+            observation_space.shape) == 3
+        assert hasattr(action_space, 'n')
+        in_channels = observation_space.shape[0]
+        out_dim = action_space.n
+        self.conv1 = nn.Conv2d(in_channels, out_channels=32,
+                               kernel_size=(8, 8), stride=(4, 4))
+        self.conv2 = nn.Conv2d(32, out_channels=64,
+                               kernel_size=(4, 4), stride=(2, 2))
+        self.conv3 = nn.Conv2d(64, out_channels=64,
+                               kernel_size=(3, 3), stride=(1, 1))
+        n_size = self._get_conv_output(observation_space.shape)
+        self.lin1 = nn.Linear(n_size, 512)
+        self.lin2 = nn.Linear(512, out_dim)
+
+    def forward(self, x):
+        x = self._forward_features(x)
+        x = x.view(x.size(0), -1)
+        x = F.relu(self.lin1(x))
+        x = F.softmax(self.lin2(x), dim=1)
+        #x = log_softmax(self.lin2(x), dim=1)
+        return x
+
+    def _get_conv_output(self, shape):
+        """ Compute the number of output parameters from convolutional part by forward pass"""
+        bs = 1
+        inputs = Variable(torch.rand(bs, *shape))
+        output_feat = self._forward_features(inputs)
+        n_size = output_feat.data.view(bs, -1).size(1)
+        return n_size
+
+    def _forward_features(self, x):
+        x = F.relu(self.conv1(x))
+        x = F.relu(self.conv2(x))
+        x = F.relu(self.conv3(x))
         return x
 
 
@@ -71,16 +119,17 @@ def gym_rollout(max_episode_length, model, random_seed, return_queue, env, is_an
     return_queue.put({'seed': random_seed, 'return': retrn,
                       'is_anti': is_antithetic, 'nsteps': nsteps})
 
-
-env = gym.make('CartPole-v0')
+n = 40
+#env = gym.make('CartPole-v0')
+env = create_atari_env('Freeway-v0')
 return_queue = mp.Queue()
 
 models = []
-for i in range(10):
-    models.append(FFN(env.observation_space, env.action_space))
+for i in range(n):
+    models.append(DQN(env.observation_space, env.action_space))
 
 processes = []
-for i in range(10):
+for i in range(n):
     p = mp.Process(target=gym_rollout, args=(1000, models[i], 'dummy_seed', return_queue, env, 'dummy_neg'))
     p.start()
     processes.append(p)
@@ -91,3 +140,6 @@ for p in processes:
 
 # Get results of finished processes
 raw_output = [return_queue.get() for p in processes]
+tf = time.clock()
+print(tf-ts)
+print(raw_output)
