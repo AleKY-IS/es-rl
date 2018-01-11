@@ -1,17 +1,20 @@
-from __future__ import absolute_import, division, print_function
-
 import math
 import os
+import queue
 import time
 
 import IPython
 import matplotlib.pyplot as plt
 import numpy as np
+
 import torch
 import torch.legacy.optim as legacyOptim
 import torch.multiprocessing as mp
 import torch.nn.functional as F
 from torch.autograd import Variable
+
+from torch import nn
+import gym
 
 
 def perturb_model(args, model, random_seed, env):
@@ -182,13 +185,14 @@ def gradient_update(args, parent_model, returns, random_seeds, is_anti_list):
             np.random.seed(random_seeds[i])
             multiplier = -1 if is_anti_list[i] else 1
             sr = shaped_returns[i]
-            for k, v in parent_model.es_params():
-                eps = np.random.normal(0, 1, v.size())
+            for param in parent_model.es_parameters():
+                eps = np.random.normal(0, 1, param.data.size())
                 grad = torch.from_numpy((args.n*args.sigma) * (sr*multiplier*eps)).float()
-                v += args.lr * grad
+                param.data += args.lr * grad
         args.lr *= args.lr_decay
 
     return parent_model
+
 
 # TODO: Examine possibility of reusing pool of workers 
 #       - p = Pool(args.n)
@@ -209,6 +213,7 @@ def train_loop(args, parent_model, env, eval_fun, chkpt_dir):
         return_queue = mp.Queue()
 
         # Generate a perturbation and its antithesis
+        # TODO: This could be be part of the parallel execution (somehow)
         for j in range(int(args.n/2)):
             random_seed, two_models = generate_seeds_and_models(args, parent_model, env)
             # Add twice because we get two models with the same seed
@@ -236,11 +241,32 @@ def train_loop(args, parent_model, env, eval_fun, chkpt_dir):
         p = mp.Process(target=eval_fun, args=(args, parent_model, 'dummy_seed', return_queue, env, 'dummy_neg'))
         p.start()
         processes.append(p)
-
-        # Get results of started processes
+                
+        # Get output from processes until all are terminated
+        # raw_output = []
+        # while processes:
+        #     # Give tasks a chance to put more data in; more if nothing returned yet
+        #     time.sleep(0.05)
+        #     if return_queue.empty():
+        #         continue
+        #     # Get output from return queue until empty
+        #     try:
+        #         while True:
+        #             raw_output.append(return_queue.get(False))
+        #     except queue.Empty:
+        #         pass
+        #     # Update live processes
+        #     processes = [p for p in processes if p.is_alive()]
+        
+        # Force join
         for p in processes:
             p.join()
+
         workers_end_time = time.clock()
+
+       #  IPython.embed()
+
+        # Get results of finished processes
         raw_output = [return_queue.get() for p in processes]
                 
         # Get all results
@@ -284,7 +310,6 @@ def train_loop(args, parent_model, env, eval_fun, chkpt_dir):
 
         # Plot
         if num_eps % (40*20) == 0:
-            print('Updating plot')
             fig = plt.figure()
             pltUnp, = plt.plot(episodes, reward_unperturbed, label='parent')
             pltAvg, = plt.plot(episodes, reward_average, label='average')
@@ -298,7 +323,6 @@ def train_loop(args, parent_model, env, eval_fun, chkpt_dir):
 
             # Add plot of time used
 
-            print('Updated plot')
             
 
         # Save checkpoint
@@ -322,10 +346,115 @@ def train_loop(args, parent_model, env, eval_fun, chkpt_dir):
                 'Learning rate: %f\n'
                 'Unperturbed reward: %f\n'
                 'Unperturbed rank: %s\n' 
-                'Using Adam: %r\n\n' %
+                'Using Adam: %r' %
                 (num_eps, reward_average[-1], reward_var[-1], reward_max[-1],
                 reward_min[-1], args.n,
                 args.max_episode_length, args.sigma, args.lr,
                 unperturbed_out['return'], rank_diag, args.useAdam))
             print("Worker time: {}".format(workers_end_time-workers_start_time))
             print("Loop time: {}".format(loop_end_time-loop_start_time))
+            print()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+class FFN(nn.Module):
+    """
+    FFN for classical control problems
+    """
+
+    def __init__(self, observation_space, action_space):
+        super(FFN, self).__init__()
+        assert hasattr(observation_space, 'shape') and len(
+            observation_space.shape) == 1
+        assert hasattr(action_space, 'n')
+        in_dim = observation_space.shape[0]
+        out_dim = action_space.n
+        self.lin1 = nn.Linear(in_dim, 32)
+        self.lin2 = nn.Linear(32, 64)
+        self.lin3 = nn.Linear(64, 64)
+        self.lin4 = nn.Linear(64, 32)
+        self.lin5 = nn.Linear(32, out_dim)
+
+    def forward(self, x):
+        x = F.relu(self.lin1(x))
+        x = F.relu(self.lin2(x))
+        x = F.relu(self.lin3(x))
+        x = F.relu(self.lin4(x))
+        print("beofre")
+        print(x)
+        x = F.log_softmax(self.lin5(x), dim=1)
+        print("did softmax")
+        # x = F.relu(self.lin5(x))
+        return x
+
+def gym_rollout(max_episode_length, model, random_seed, return_queue, env, is_antithetic):
+    """
+    Function to do rollouts of a policy defined by `model` in given environment
+    """
+    # Reset environment
+    state = env.reset()
+    state = Variable(torch.from_numpy(state).float(),
+                    requires_grad=True).unsqueeze(0)
+    retrn = 0
+    nsteps = 0
+    done = False
+    # Rollout
+    while not done and nsteps < max_episode_length:
+        # Choose action
+        actions = model(state)
+        action = actions.max(1)[1].data.numpy()
+        # Step
+        state, reward, done, _ = env.step(action[0])
+        retrn += reward
+        nsteps += 1
+        # Cast state
+        state = Variable(torch.from_numpy(state).float(),
+                        requires_grad=True).unsqueeze(0)
+    return_queue.put({'seed': random_seed, 'return': retrn,
+                    'is_anti': is_antithetic, 'nsteps': nsteps})
+
+def train_loopasd(args, parent_model, env, eval_fun, chkpt_dir):
+    for _ in range(args.max_gradient_updates):
+        env = gym.make('CartPole-v0')
+        return_queue = mp.Queue()
+
+        models = []
+        for i in range(10):
+            models.append(FFN(env.observation_space, env.action_space))
+
+        processes = []
+        for i in range(10):
+            p = mp.Process(target=gym_rollout, args=(
+                1000, models[i], 'dummy_seed', return_queue, env, 'dummy_neg'))
+            p.start()
+            processes.append(p)
+
+        # Force join
+        for p in processes:
+            p.join()
+
+        # Get results of finished processes
+        raw_output = [return_queue.get() for p in processes]
+        
+
+
+
+
+

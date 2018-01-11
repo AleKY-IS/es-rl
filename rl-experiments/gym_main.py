@@ -39,20 +39,14 @@ if __name__ == '__main__':
     assert args.n % 2 == 0
 
     # Create environment
-    if args.env_name == 'CartPole-v0' or 'CartPole-v1':
+    if args.env_name == 'CartPole-v0' or args.env_name == 'CartPole-v1':
         env = gym.make(args.env_name)
     else:
         env = create_atari_env(args.env_name, square_size=args.frame_size)
-    
+        
     # Create model
     model_class = getattr(es.models, args.model_name)
     parent_model = model_class(env.observation_space, env.action_space)
-    state = env.reset()
-    state = torch.from_numpy(state).float()     # Cast to torch array
-    state = Variable(state, volatile=True)      # Wrap with Variable to become part of graph
-    state = state.unsqueeze(0)                  # Expand dimensions to include batch size of 1
-    actions = parent_model(state)
-    p, a = actions.max(1)
 
     # Remove gradient requirement from parameters
     # for param in parent_model.parameters():
@@ -74,6 +68,9 @@ if __name__ == '__main__':
 
     # Run test or train
     if args.test:
-        render_env(args, parent_model, env)
+        gym_render(args, parent_model, env)
     else:
-        train_loop(args, parent_model, env, gym_rollout, chkpt_dir)
+        try:
+            train_loop(args, parent_model, env, gym_rollout, chkpt_dir)
+        except KeyboardInterrupt:
+            print("Program stopped by keyboard interruption")

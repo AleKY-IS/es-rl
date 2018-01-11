@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 from torch.autograd import Variable
-
+import time
 import IPython
 
 
@@ -10,24 +10,33 @@ def gym_rollout(args, model, random_seed, return_queue, env, is_antithetic):
     Function to do rollouts of a policy defined by `model` in given environment
     """
     # Reset environment
+    print("Work started")
+    model_time = 0
     state = env.reset()
     state = Variable(torch.from_numpy(state).float(), requires_grad=True).unsqueeze(0)
     retrn = 0
     nsteps = 0
     done = False
     # Rollout
+    total_time = time.clock()
     while not done and nsteps < args.max_episode_length:
         # Choose action
+        model_time_start = time.clock()
         actions = model(state)
+        model_time += time.clock() - model_time_start
         action = actions.max(1)[1].data.numpy()
+        # print("test")
         # Step
         state, reward, done, _ = env.step(action[0])
         retrn += reward
         nsteps += 1
         # Cast state
         state = Variable(torch.from_numpy(state).float(), requires_grad=True).unsqueeze(0)
+        # print("iter " + str(nsteps))
+    total_time = time.clock() - total_time
     #return_queue.put((random_seeds, all_returns, all_num_steps, is_antithetic))
     return_queue.put({'seed': random_seed, 'return': retrn, 'is_anti': is_antithetic, 'nsteps': nsteps})
+    print("Work ended " + str(nsteps) + " tot: " + str(total_time) + " mod: " + str(model_time))
 
 
 def gym_render(args, model, env):
@@ -96,23 +105,25 @@ def gym_rollout_gradients(args, models, random_seeds, return_queue, env, is_anti
     return_queue.put((random_seeds, all_returns, all_num_steps, is_antithetic))
 
 
-def supervised_eval(args, model, random_seed, return_queue, train_data_loader, is_antithetic):
+def supervised_eval(args, model, random_seed, return_queue, train_loader, is_antithetic):
     """
     Function to evaluate the fitness of a supervised model.
 
     For supervised training, the training data set loader is viewed as the "environment"
-    and is passed in the env variable (train_data_loader).
+    and is passed in the env variable (train_loader).
     """
-    print(next(iter(data_loader)))
-    (data, target) = next(iter(data_loader))
-    print(data)
-    print(target)
+    #print(next(iter(train_loader)))
+    (data, target) = next(iter(train_loader))
+    #print(data)
+    #print(target)
     
-    if args.cuda:
-        data, target = data.cuda(), target.cuda()
+    #if args.cuda:
+    #    data, target = data.cuda(), target.cuda()
     data, target = Variable(data), Variable(target)
     output = model(data)
+    print("before")
     loss = -F.nll_loss(output, target)
+    print("after")
 
     assert 2 == 1
     return_queue.put({'seed': random_seed, 'return': loss, 'is_anti': is_antithetic, 'nsteps': nsteps})

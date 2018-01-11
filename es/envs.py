@@ -17,7 +17,6 @@ def create_env(env_id, **kwargs):
     spec = gym.spec(env_id)
     return env
 
-
 # Taken from https://github.com/openai/universe-starter-agent
 def create_atari_env(env_id, square_size=42):
     env = gym.make(env_id)
@@ -27,7 +26,6 @@ def create_atari_env(env_id, square_size=42):
     env = NormalizedEnv(env)
     env = Unvectorize(env)
     return env
-
 
 def create_classical_control_env(env_id):
     env = gym.make(env_id)
@@ -47,20 +45,20 @@ class AtariRescale(vectorized.ObservationWrapper):
         self.observation_space = Box(0.0, 1.0, [1, square_size, square_size])
 
     def _observation(self, observation_n):
-        return [_process_frame(observation, square_size=self.square_size) for observation in observation_n]
+        return [self._process_frame(observation) for observation in observation_n]
 
-    def _process_frame(frame, square_size=42):
+    def _process_frame(self, frame):
         frame = frame[34:34 + 160, :160]
         # Resize by half, then down to 42x42 (essentially mipmapping). If
         # we resize directly we lose pixels that, when mapped to 42x42,
         # aren't close enough to the pixel boundary.
-        if square_size < 80:
+        if self.square_size < 80:
             frame = cv2.resize(frame, (80, 80))
-        frame = cv2.resize(frame, (square_size, square_size))
+        frame = cv2.resize(frame, (self.square_size, self.square_size))
         frame = frame.mean(2)
         frame = frame.astype(np.float32)
         frame *= (1.0 / 255.0)
-        frame = np.reshape(frame, [1, square_size, square_size])
+        frame = np.reshape(frame, [1, self.square_size, self.square_size])
         return frame
 
 

@@ -1,6 +1,3 @@
-# Taken from https://github.com/ikostrikov/pytorch-a3c
-from __future__ import absolute_import, division, print_function
-
 import IPython
 import numpy as np
 import torch
@@ -9,7 +6,27 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 
 
+def softmax(x, dim):
+    """
+    Make-shift version of softmax that works on linux.
+    """
+    s = x.data.exp().sum()
+    x.data = x.data.exp()/s
+    return x
+
+def log_softmax(x, dim):
+    x.data = softmax(x, dim).data.log()
+    return x
+
+
 class AbstractESModel(nn.Module):
+    """
+    Abstract models class for models that are trained by evolutionary
+    methods. The models have the .parameters() method, but here an additional
+    .es_parameters() method is added. Normally, parameters are trained/not trained
+    based on the .requires_grad bool. For ES this is not really analogous to being
+    trained or not.
+    """
     def count_parameters(self):
         count = 0
         for param in self.parameters():
@@ -20,7 +37,7 @@ class AbstractESModel(nn.Module):
         """
         The params that should be trained by ES (all of them)
         """
-        return [param for param in self.parameters()]
+        return self.parameters()
 
 
 class FFN(AbstractESModel):
@@ -44,15 +61,10 @@ class FFN(AbstractESModel):
         x = F.relu(self.lin2(x))
         x = F.relu(self.lin3(x))
         x = F.relu(self.lin4(x))
-        x = F.softmax(self.lin5(x), dim=1)
+        x = F.log_softmax(self.lin5(x), dim=1)
+        #x = F.relu(self.lin5(x))
+        #x = log_softmax(self.lin5(x), dim=1)
         return x
-
-    def es_parameters(self):
-        """
-        The params that should be trained by ES (all of them)
-        """
-        return [param for param in self.parameters()]
-
 
 class DQN(AbstractESModel):
     """
@@ -76,13 +88,14 @@ class DQN(AbstractESModel):
         x = x.view(x.size(0), -1)
         x = F.relu(self.lin1(x))
         x = F.softmax(self.lin2(x), dim=1)
+        #x = log_softmax(self.lin2(x), dim=1)
         return x
 
     def _get_conv_output(self, shape):
         """ Compute the number of output parameters from convolutional part by forward pass"""
         bs = 1
-        input = Variable(torch.rand(bs, *shape))
-        output_feat = self._forward_features(input)
+        inputs = Variable(torch.rand(bs, *shape))
+        output_feat = self._forward_features(inputs)
         n_size = output_feat.data.view(bs, -1).size(1)
         return n_size
 
@@ -98,7 +111,7 @@ class MujocoFFN(AbstractESModel):
     The FFN used by Salismans (2017)
     """
     def __init__(self, observation_space, action_space):
-        super(DQN, self).__init__()
+        super(MujocoFFN, self).__init__()
         self.full1 = nn.Linear(observation_space.shape, 2)
 
     def forward(self, x):
