@@ -72,7 +72,7 @@ if __name__ == '__main__':
     if opt_class is optim.SGD:
         optimizer = opt_class(parent_model.parameters(), lr=args.lr)
     else:
-        optimizer = opt_class(parent_model.parameters())
+        optimizer = opt_class(parent_model.parameters(), lr=args.lr)
 
     # (data, target) = next(iter(train_loader))
     #data, target = Variable(data), Variable(target)

@@ -6,6 +6,7 @@ import os
 import gym
 import IPython
 import torch
+import torch.optim as optim
 import torch.multiprocessing as mp
 import torch.nn.functional as F
 from torch.autograd import Variable
@@ -20,10 +21,10 @@ from es.train import train_loop
 parser = argparse.ArgumentParser(description='ES')
 parser.add_argument('--env-name', default='CartPole-v0', metavar='ENV', help='environment')
 parser.add_argument('--model-name', default='FFN', choices=['DQN', 'FFN', 'Mujoco', 'ES'], metavar='MOD', help='model name')
+parser.add_argument('--optimizer', type=str, default='SGD', help='optimizer to use')
 parser.add_argument('--lr', type=float, default=0.1, metavar='LR', help='learning rate')
 parser.add_argument('--lr-decay', type=float, default=1, metavar='LRD', help='learning rate decay')
 parser.add_argument('--sigma', type=float, default=0.05, metavar='SD', help='noise standard deviation')
-parser.add_argument('--useAdam', action='store_true', help='bool to determine if to use adam optimizer')
 parser.add_argument('--n', type=int, default=40, metavar='N', help='batch size, must be even')
 parser.add_argument('--max-episode-length', type=int, default=10000, metavar='MEL', help='maximum length of an episode')
 parser.add_argument('--max-gradient-updates', type=int, default=100000, metavar='MGU', help='maximum number of updates')
@@ -48,6 +49,17 @@ if __name__ == '__main__':
     model_class = getattr(es.models, args.model_name)
     parent_model = model_class(env.observation_space, env.action_space)
 
+    # Create optimizer
+    try:
+        opt_class = getattr(optim, args.optimizer)
+    except AttributeError:
+        print('Optimizer unrecognized, using SGD')
+        opt_class = optim.SGD
+    if opt_class is optim.SGD:
+        optimizer = opt_class(parent_model.parameters(), lr=args.lr)
+    else:
+        optimizer = opt_class(parent_model.parameters())
+
     # Remove gradient requirement from parameters
     # for param in parent_model.parameters():
     #    param.requires_grad = False
@@ -71,6 +83,6 @@ if __name__ == '__main__':
         gym_render(args, parent_model, env)
     else:
         try:
-            train_loop(args, parent_model, env, gym_rollout, chkpt_dir)
+            train_loop(args, parent_model, env, gym_rollout, optimizer, chkpt_dir)
         except KeyboardInterrupt:
             print("Program stopped by keyboard interruption")

@@ -3,9 +3,10 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 import time
 import IPython
+from sklearn.metrics import confusion_matrix
 
 
-def gym_rollout(args, model, random_seed, return_queue, env, is_antithetic):
+def gym_rollout(args, model, random_seed, return_queue, env, is_antithetic, collect_inputs=False):
     """
     Function to do rollouts of a policy defined by `model` in given environment
     """
@@ -17,26 +18,25 @@ def gym_rollout(args, model, random_seed, return_queue, env, is_antithetic):
     retrn = 0
     nsteps = 0
     done = False
+    inputs = None
     # Rollout
-    # total_time = time.clock()
     while not done and nsteps < args.max_episode_length:
+        # Collect states as batch inputs 
+        if collect_inputs:
+            inputs = torch.cat((inputs, state)) if inputs is not None else state
         # Choose action
-        # model_time_start = time.clock()
         actions = model(state)
-        # model_time += time.clock() - model_time_start
         action = actions.max(1)[1].data.numpy()
-        # print("test")
         # Step
         state, reward, done, _ = env.step(action[0])
         retrn += reward
         nsteps += 1
         # Cast state
         state = Variable(torch.from_numpy(state).float(), requires_grad=True).unsqueeze(0)
-        # print("iter " + str(nsteps))
-    # total_time = time.clock() - total_time
-    #return_queue.put((random_seeds, all_returns, all_num_steps, is_antithetic))
-    return_queue.put({'seed': random_seed, 'return': retrn, 'is_anti': is_antithetic, 'nsteps': nsteps})
-    # print("Work ended " + str(nsteps) + " tot: " + str(total_time) + " mod: " + str(model_time))
+    out = {'seed': random_seed, 'return': retrn, 'is_anti': is_antithetic, 'nsteps': nsteps}
+    if collect_inputs:
+        out['inputs'] = inputs
+    return_queue.put(out)
 
 
 def gym_render(args, model, env):
@@ -86,7 +86,7 @@ def supervised_eval(args, model, random_seed, return_queue, train_loader, is_ant
     if collect_inputs:
         out['inputs'] = data
     return_queue.put(out)
-    #print(correct_ratio)
+    print(correct_ratio)
 
 
 def supervised_test(args, model, test_loader):
@@ -96,6 +96,8 @@ def supervised_test(args, model, test_loader):
     model.eval()
     test_loss = 0
     correct = 0
+    predictions = []
+    targets = []
     for data, target in test_loader:
         if args.cuda:
             data, target = data.cuda(), target.cuda()
@@ -104,8 +106,21 @@ def supervised_test(args, model, test_loader):
         test_loss += F.nll_loss(output, target, size_average=False).data[0] # sum up batch loss
         pred = output.data.max(1, keepdim=True)[1] # get the index of the max log-probability
         correct += pred.eq(target.data.view_as(pred)).cpu().sum()
+        predictions.extend(pred.numpy().flatten())
+        targets.extend(target.data.numpy().flatten())
 
     test_loss /= len(test_loader.dataset)
     print('Average loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)\n'.format(
         test_loss, correct, len(test_loader.dataset),
         100. * correct / len(test_loader.dataset)))
+    print(confusion_matrix(targets, predictions))
+
+
+    # (2) #I have 2 classes here
+    # for ii, data in enumerate(val_dataloader):
+    #     input, label = data
+    #     val_input = Variable(input, volatile=True).cuda()
+    #     val_label = Variable(label.type(t.LongTensor), volatile=True).cuda()
+    #     score = model(val_input)
+    #     confusion_matrix.add(score.data.squeeze(), label.type(t.LongTensor))
+    # print confusion_matrix.conf
