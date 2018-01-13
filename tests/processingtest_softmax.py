@@ -1,6 +1,9 @@
+import platform
 import time
+
 import IPython
 import numpy as np
+
 import torch
 import torch.multiprocessing as mp
 import torch.nn.functional as F
@@ -13,18 +16,13 @@ class FFN(nn.Module):
     FFN for classical control problems
     """
 
-    def __init__(self, observation_space, action_space, acti='relu'):
+    def __init__(self, acti='relu'):
         super(FFN, self).__init__()
-        assert hasattr(observation_space, 'shape') and len(
-            observation_space.shape) == 1
-        assert hasattr(action_space, 'n')
-        in_dim = observation_space.shape[0]
-        out_dim = action_space.n
-        self.lin1 = nn.Linear(in_dim, 32)
+        self.lin1 = nn.Linear(10, 32)
         self.lin2 = nn.Linear(32, 64)
         self.lin3 = nn.Linear(64, 64)
         self.lin4 = nn.Linear(64, 32)
-        self.lin5 = nn.Linear(32, out_dim)
+        self.lin5 = nn.Linear(32, 10)
         self.acti = acti
 
     def forward(self, x):
@@ -40,63 +38,59 @@ class FFN(nn.Module):
         return x
 
 
-# SINGLE THREADED
-for acti in ['relu', 'softmax']:
+if __name__ == '__main__':
+    # Model input
     n = 25000
-    env = gym.make('CartPole-v0')
-    model = FFN(env.observation_space, env.action_space, acti=acti)
-    state = env.reset()
-    state = Variable(torch.from_numpy(state).float(),requires_grad=True).unsqueeze(0)   
+    state = Variable(torch.randn(10), requires_grad=True)
+    
 
-    ts = time.perf_counter()
-    for i in range(n):
-        model(state)
-        #gym_rollout(1000, model, 'dummy_seed', env, 'dummy_neg')
-    tf = time.perf_counter()
+    # SINGLE THREADED
+    for acti in ['relu', 'softmax']:
+        model = FFN(acti=acti)
+        ts = time.perf_counter()
+        for i in range(n):
+            model(state)
+        tf = time.perf_counter()
 
-    print("single " + acti + " total: " + str(tf-ts))
-    print("single " + acti + " per call: " + str((tf - ts) / n) + "\n")
+        print("single " + acti + " total: " + str(tf-ts))
+        print("single " + acti + " per call: " + str((tf - ts) / n) + "\n")
 
 
-# MULTI THREADED
-n_parallel = 10
-n_forwards = 2500
-def do_forward(model, x):
-    for i in range(n_forwards):
-        model(x)
+    # MULTI THREADED
+    # Set number of threads for CPU parallelized operations
+    if platform.system() is 'Linux':
+        torch.set_num_threads(1)
+    print("Num threads = " + str(torch.get_num_threads()))
 
-for acti in ['relu', 'softmax']:
+    # Method to do multiple forward passes (analogous to rollout)
+    def do_forward(model, x):
+        for i in range(n_forwards):
+            model(x)
 
-    env = gym.make('CartPole-v0')
-    state = env.reset()
-    state = Variable(torch.from_numpy(state).float(), requires_grad=True).unsqueeze(0)  
-    return_queue = mp.Queue()
+    n_parallel = 10
+    n_forwards = int(n/n_parallel)
+    for acti in ['relu', 'softmax']:
+        # Initialize return queue
+        return_queue = mp.Queue()
+        # Intialize models
+        models = []
+        for i in range(n_parallel):
+            models.append(FFN(acti=acti))
 
-    models = []
-    #print("0")
-    for i in range(n_parallel):
-        models.append(FFN(env.observation_space, env.action_space, acti=acti))
-    #print("1")
+        # Create and start processes
+        processes = []
+        ts = time.perf_counter()
+        for i in range(n_parallel):
+            p = mp.Process(target=do_forward, args=(models[i], state))
 
-    #IPython.embed()
-    # models[0](state)
+            #time.sleep(1)
+            p.start()
+            processes.append(p)
 
-    processes = []
-    ts = time.perf_counter()
-    for i in range(n_parallel):
-        p = mp.Process(target=do_forward, args=(models[i], state))
-        #p = mp.Process(target=gym_rollout_multi, args=(1000, models[i], 'dummy_seed', return_queue, env, 'dummy_neg'))
-        p.start()
-        processes.append(p)
-    #print("2")
-    # Force join
-    for p in processes:
-        p.join()
-    #print("3")
-    # Get results of finished processes
-    #raw_output = [return_queue.get() for p in processes]
-    tf = time.perf_counter()
-    print("multi " + acti + " total: " + str(tf-ts))
-    print("multi " + acti + " per call: " + str((tf-ts)/(n_forwards*n_parallel)) + "\n")
-    #print("4")
-    #print(raw_output)
+        # Force join
+        for p in processes:
+            p.join()
+        
+        tf = time.perf_counter()
+        print("multi " + acti + " total: " + str(tf-ts))
+        print("multi " + acti + " per call: " + str((tf-ts)/(n_forwards*n_parallel)) + "\n")
