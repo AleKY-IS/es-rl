@@ -41,58 +41,6 @@ class FFN(nn.Module):
         return x
 
 
-def gym_rollout(max_episode_length, model, random_seed, env, is_antithetic):
-    """
-    Function to do rollouts of a policy defined by `model` in given environment
-    """
-    # Reset environment
-    state = env.reset()
-    state = Variable(torch.from_numpy(state).float(),
-                     requires_grad=True).unsqueeze(0)
-    retrn = 0
-    nsteps = 0
-    done = False
-    # Rollout
-    while not done and nsteps < max_episode_length:
-        # Choose action
-        actions = model(state)
-        action = actions.max(1)[1].data
-        # Step
-        state, reward, done, _ = env.step(action[0])
-        retrn += reward
-        nsteps += 1
-        # Cast state
-        state = Variable(torch.from_numpy(state).float(),
-                         requires_grad=True).unsqueeze(0)
-
-
-def gym_rollout_multi(max_episode_length, model, random_seed, return_queue, env, is_antithetic):
-    """
-    Function to do rollouts of a policy defined by `model` in given environment
-    """
-    # Reset environment
-    state = env.reset()
-    state = Variable(torch.from_numpy(state).float(),
-                     requires_grad=True).unsqueeze(0)
-    retrn = 0
-    nsteps = 0
-    done = False
-    # Rollout
-    while not done and nsteps < max_episode_length:
-        # Choose action
-        actions = model(state)
-        action = actions.max(1)[1].data.numpy()
-        # Step
-        state, reward, done, _ = env.step(action[0])
-        retrn += reward
-        nsteps += 1
-        # Cast state
-        state = Variable(torch.from_numpy(state).float(),
-                         requires_grad=True).unsqueeze(0)
-    return_queue.put({'seed': random_seed, 'return': retrn,
-                      'is_anti': is_antithetic, 'nsteps': nsteps})
-
-
 # SINGLE THREADED
 for acti in ['relu', 'softmax']:
     n = 25000
