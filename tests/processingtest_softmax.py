@@ -1,6 +1,5 @@
 import time
 import IPython
-import gym
 import numpy as np
 import torch
 import torch.multiprocessing as mp
