@@ -58,7 +58,7 @@ if __name__ == '__main__':
 
     # MULTI THREADED
     # Set number of threads for CPU parallelized operations
-    if platform.system() is 'Linux':
+    if platform.system() == 'Linux':
         torch.set_num_threads(1)
     print("Num threads = " + str(torch.get_num_threads()))
 

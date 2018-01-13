@@ -23,8 +23,8 @@ def print_init(args):
         print("----- Evolver parameters ------")
         print("Environment:          %s" % args.env_name)
         print("Population:           %s" % args.model_name)
-        print("Workers:              %d" % args.n)
-        print("Generations:          %d" % args.max_gradient_updates)
+        print("Workers:              %d" % args.agents)
+        print("Generations:          %d" % args.max_generations)
         print("Sigma:                %5.4f" % args.sigma)
         print("Learning rate:        %5.4f\n" % args.lr)
         print("Learning rate decay:  %5.4f\n" % args.lr-decay)
@@ -42,7 +42,7 @@ def unperturbed_rank(returns, unperturbed_results):
     for r in returns:
         if r > unperturbed_results:
             nth_place += 1
-    rank_diag = ('%d out of %d (1 means gradient is uninformative)' % (nth_place, len(returns) + 1))
+    rank_diag = '{:d} out of {:d}'.format(nth_place, len(returns) + 1)
     return rank_diag, nth_place
 
 
@@ -92,14 +92,6 @@ def fitness_shaping(returns):
     for k in range(n):
         u[sorted_indices[k]] = np.max([0, np.log(n/2+1)-np.log(k+1)])
     return u/np.sum(u)-1/n
-
-optimConfig = []
-reward_unperturbed = []
-reward_average = []
-reward_max = []
-reward_min = []
-reward_var = []
-episodes = []
 
 
 def compute_sensitivities(parent_model, inputs):
@@ -172,7 +164,7 @@ def compute_sensitivities(parent_model, inputs):
 def compute_gradients(args, parent_model, returns, random_seeds, is_anti_list):
     # Verify input
     batch_size = len(returns)
-    assert batch_size == args.n
+    assert batch_size == args.agents
     assert len(random_seeds) == batch_size
 
     # Shape returns and get rank of unperturbed model
@@ -186,14 +178,14 @@ def compute_gradients(args, parent_model, returns, random_seeds, is_anti_list):
 
     # Compute gradients
     # TODO: Always use an optimizer to step on the computed gradients [DONE]
-    for i in range(args.n):
+    for i in range(args.agents):
         # Set random seed, get antithetic multiplier and reward
         np.random.seed(random_seeds[i])
         multiplier = -1 if is_anti_list[i] else 1
         reward = shaped_returns[i]
         for layer, param in enumerate(parent_model.parameters()):
             eps = np.random.normal(0, 1, param.data.size())
-            gradients[layer] += (torch.from_numpy((args.n*args.sigma) * (reward*multiplier*eps)).float())
+            gradients[layer] += (torch.from_numpy((args.agents*args.sigma) * (reward*multiplier*eps)).float())
             #gradients[layer] += torch.from_numpy(eps).float()
 
     # Set gradients
@@ -214,7 +206,7 @@ def compute_gradients(args, parent_model, returns, random_seeds, is_anti_list):
     #               optimizer.step()
 
     # gradient = []
-    # for i in range(args.n):
+    # for i in range(args.agents):
     #     np.random.seed(random_seeds[i])
     #     multiplier = -1 if is_anti_list[i] else 1
     #     reward = shaped_returns[i]
@@ -224,7 +216,7 @@ def compute_gradients(args, parent_model, returns, random_seeds, is_anti_list):
     #         loss.backward()
     #         # ES strategy
     #         eps = np.random.normal(0, 1, v.size())
-    #         gradient.append(torch.from_numpy((args.n*args.sigma) * (reward*multiplier*eps)).float())
+    #         gradient.append(torch.from_numpy((args.agents*args.sigma) * (reward*multiplier*eps)).float())
     #         # Safe mutations
     #         eps = np.random.normal(0, 1, v.size())
     #         (mini-batch of network outputs).backward() # Compute sensitivities and store them in v.grad.data
@@ -241,7 +233,7 @@ def compute_gradients(args, parent_model, returns, random_seeds, is_anti_list):
 
     # if args.optimizer == 'Adam':
     #     globalGrads = None
-    #     for i in range(args.n):
+    #     for i in range(args.agents):
     #         np.random.seed(random_seeds[i])
     #         multiplier = -1 if is_anti_list[i] else 1
     #         sr = shaped_returns[i]
@@ -250,7 +242,7 @@ def compute_gradients(args, parent_model, returns, random_seeds, is_anti_list):
     #         idx = 0
     #         for param in parent_model.es_parameters():
     #             eps = np.random.normal(0, 1, param.data.size())
-    #             grad = torch.from_numpy((args.n*args.sigma) * (sr*multiplier*eps)).float()
+    #             grad = torch.from_numpy((args.agents*args.sigma) * (sr*multiplier*eps)).float()
 
     #             localGrads.append(grad)
                 
@@ -272,13 +264,13 @@ def compute_gradients(args, parent_model, returns, random_seeds, is_anti_list):
     # else:
     #     # For each model, generate the same random numbers as we did
     #     # before, and update parameters. We apply weight decay once.
-    #     for i in range(args.n):
+    #     for i in range(args.agents):
     #         np.random.seed(random_seeds[i])
     #         multiplier = -1 if is_anti_list[i] else 1
     #         sr = shaped_returns[i]
     #         for param in parent_model.es_parameters():
     #             eps = np.random.normal(0, 1, param.data.size())
-    #             grad = torch.from_numpy((args.n*args.sigma) * (sr*multiplier*eps)).float()
+    #             grad = torch.from_numpy((args.agents*args.sigma) * (sr*multiplier*eps)).float()
     #             param.data += args.lr * grad
     #     args.lr *= args.lr_decay
 
@@ -287,31 +279,49 @@ def compute_gradients(args, parent_model, returns, random_seeds, is_anti_list):
 
 
 # TODO: Examine possibility of reusing pool of workers 
-#       - p = Pool(args.n)
-#       - for _ in range(args.max_gradient_updates):
-#       -   for j in range(int(args.n/2)):
+#       - p = Pool(args.agents)
+#       - for _ in range(args.max_generations):
+#       -   for j in range(int(args.agents/2)):
 #       -       inputs.append((args, perturbed_model, seed, return_queue, env, is_negative))
 #       -   p.imap_unordered(eval_fun, args=inputs) 
 def train_loop(args, parent_model, env, eval_fun, optimizer, chkpt_dir):
     # Initialize list of processes, seeds and models and return queue
-    processes, seeds, models = [], [], []
+    #processes, seeds, models = [], [], []
+    # Initialize structures for saving statistics
+    reward_unperturbed = []
+    reward_average = []
+    reward_max = []
+    reward_min = []
+    reward_var = []
+    generations = []
+    episodes = []
+    observations = []
+    walltimes = []
+
+    # 
     return_queue = mp.Queue()
+    
     # Evaluate parent model
     eval_fun(args, parent_model, 'dummy_seed', return_queue, env, 'dummy_neg', collect_inputs=True)
     unperturbed_out = return_queue.get()
     # Start training loop
-    num_eps = 0
-    total_num_frames = 0
-    for _ in range(args.max_gradient_updates):
+    n_episodes = 0
+    n_generation = 0
+    n_observations = 0
+    start_time = time.perf_counter()
+    for n_generation in range(args.max_generations):
         loop_start_time = time.perf_counter()
-        
+        # Empty list of processes, seeds and models and return queue
+        processes, seeds, models = [], [], []
+        return_queue = mp.Queue()
+        # done = mp.Event()
 
         # Compute parent model weight-output sensitivities
-        compute_sensitivities(parent_model, unperturbed_out['inputs'])
-        #IPython.embed()
+        compute_sensitivities(parent_model, Variable(torch.from_numpy(unperturbed_out['inputs'])))
+
         # Generate a perturbation and its antithesis
         # TODO: This could be be part of the parallel execution (somehow)
-        for j in range(int(args.n/2)):
+        for j in range(int(args.agents/2)):
             random_seed, two_models = generate_seeds_and_models(args, parent_model, env)
             # Add twice because we get two models with the same seed
             seeds.append(random_seed)
@@ -338,63 +348,58 @@ def train_loop(args, parent_model, env, eval_fun, optimizer, chkpt_dir):
         p = mp.Process(target=eval_fun, args=(args, parent_model, 'dummy_seed', return_queue, env, 'dummy_neg'), kwargs={'collect_inputs': True})
         p.start()
         processes.append(p)
-                
+
         # Get output from processes until all are terminated
-        # raw_output = []
-        # while processes:
-        #     # Give tasks a chance to put more data in; more if nothing returned yet
-        #     time.sleep(0.05)
-        #     if return_queue.empty():
-        #         continue
-        #     # Get output from return queue until empty
-        #     try:
-        #         while True:
-        #             raw_output.append(return_queue.get(False))
-        #     except queue.Empty:
-        #         pass
-        #     # Update live processes
-        #     processes = [p for p in processes if p.is_alive()]
-        
+        raw_output = []
+        while processes:
+            # Update live processes
+            processes = [p for p in processes if p.is_alive()]
+            # Get all returns from finished processes return queue
+            while not return_queue.empty():
+                raw_output.append(return_queue.get(False))
+
         # Force join
         for p in processes:
             p.join()
 
-        workers_end_time = time.perf_counter()
-
-        # Get results of finished processes
-        raw_output = [return_queue.get() for p in processes]
+        workers_end_time = time.perf_counter()        
+        
         # Split into parts
         seeds = [out['seed'] for out in raw_output]
         returns = [out['return'] for out in raw_output]
         is_anti_list = [out['is_anti'] for out in raw_output]
-        nsteps = [out['nsteps'] for out in raw_output]
-        # # Get results of unperturbed model and remove it from all results
+        i_observations = [out['n_observations'] for out in raw_output]
+
+        # Get results of unperturbed model and remove it from all results
         unperturbed_index = seeds.index('dummy_seed')
         unperturbed_out = raw_output.pop(unperturbed_index)
         assert unperturbed_out['seed'] == 'dummy_seed'
         seeds.pop(unperturbed_index)
         returns.pop(unperturbed_index)
         is_anti_list.pop(unperturbed_index)
-        nsteps.pop(unperturbed_index)
-        
-        #IPython.embed()
+        i_observations.pop(unperturbed_index)
         
         # Update gradient
         compute_gradients(args, parent_model, returns, seeds, is_anti_list)
         optimizer.step()
+        # lr_scheduler.step()
 
         if hasattr(args, 'variable_ep_len') and args.variable_ep_len:
             args.max_episode_length = int(5*max(num_frames))
 
-        # Print to console
-        # TODO: Fix saving to include episode number etc
-        # TODO: Fix saving to be into file's directory
-        # TODO: (Save only the model if it is better than the previous one)
-        # TODO: Make checkpoint based on time (every 1 minute e.g.)
+        # Compute rank of unperturbed model
         rank_diag, rank = unperturbed_rank(returns, unperturbed_out['return'])
         
-        num_eps += len(returns)
-        episodes.append(num_eps)
+        # Time
+        loop_end_time = time.perf_counter()
+
+        # Store statistics
+        n_episodes += len(returns)
+        n_observations += sum(i_observations)
+        generations.append(n_generation)
+        episodes.append(n_episodes)
+        observations.append(n_observations)
+        walltimes.append(loop_end_time - start_time)
         reward_unperturbed.append(unperturbed_out['return'])
         reward_average.append(np.mean(returns))
         reward_max.append(max(returns))
@@ -403,33 +408,74 @@ def train_loop(args, parent_model, env, eval_fun, optimizer, chkpt_dir):
         
 
         # Plot
-        if num_eps % (40*20) == 0:
+        if n_episodes % (40*20) == 0:
+            # NOTE: Possible x-axis are: generations, episodes, observations, time
             fig = plt.figure()
             pltUnp, = plt.plot(episodes, reward_unperturbed, label='parent')
             pltAvg, = plt.plot(episodes, reward_average, label='average')
             pltMax, = plt.plot(episodes, reward_max, label='max')
             pltMin, = plt.plot(episodes, reward_min, label='min')
             plt.ylabel('rewards')
-            plt.xlabel('episode num')
+            plt.xlabel('episodes')
             plt.legend(handles=[pltUnp, pltAvg, pltMax,pltMin])
             fig.savefig(chkpt_dir+'/progress.pdf')
             plt.close(fig)
 
-            # Add plot of time used
+            fig = plt.figure()
+            walltimes_plot = np.array(walltimes)/60
+            pltUnp, = plt.plot(walltimes_plot, reward_unperturbed, label='parent')
+            pltAvg, = plt.plot(walltimes_plot, reward_average, label='average')
+            pltMax, = plt.plot(walltimes_plot, reward_max, label='max')
+            pltMin, = plt.plot(walltimes_plot, reward_min, label='min')
+            plt.ylabel('rewards')
+            plt.xlabel('time [min]')
+            plt.legend(handles=[pltUnp, pltAvg, pltMax,pltMin])
+            fig.savefig(chkpt_dir+'/progress2.pdf')
+            plt.close(fig)
 
-        if num_eps % (40*20) == 0:
+            fig = plt.figure()
+            pltUnp, = plt.plot(observations, reward_unperturbed, label='parent')
+            pltAvg, = plt.plot(observations, reward_average, label='average')
+            pltMax, = plt.plot(observations, reward_max, label='max')
+            pltMin, = plt.plot(observations, reward_min, label='min')
+            plt.ylabel('rewards')
+            plt.xlabel('observations')
+            plt.legend(handles=[pltUnp, pltAvg, pltMax,pltMin])
+            fig.savefig(chkpt_dir+'/progress3.pdf')
+            plt.close(fig)
+
+            fig = plt.figure()
+            pltUnp, = plt.plot(generations, reward_unperturbed, label='parent')
+            pltAvg, = plt.plot(generations, reward_average, label='average')
+            pltMax, = plt.plot(generations, reward_max, label='max')
+            pltMin, = plt.plot(generations, reward_min, label='min')
+            plt.ylabel('rewards')
+            plt.xlabel('generations')
+            plt.legend(handles=[pltUnp, pltAvg, pltMax,pltMin])
+            fig.savefig(chkpt_dir+'/progress4.pdf')
+            plt.close(fig)
+
+            # TODO: Plot of time used
+            # TODO: Plot of reward variance
+            # TODO: Plot of smoothed reward
+            # TODO: Plot unperturbed rank
+
+        # Save checkpoint
+        if n_episodes % (40*20) == 0:
             torch.save(parent_model.state_dict(), os.path.join(chkpt_dir, 'model_state_dict.pth'))
             torch.save(optimizer.state_dict(), os.path.join(chkpt_dir, 'optimizer_state_dict.pth'))
 
-        # Save checkpoint
-        # - model.state_dict
-        # - optimizer.state_dict
-        # - data used in plots and prints
-        # - settings for algorithm (sigma)
+            # DONE: model.state_dict
+            # DONE: optimizer.state_dict
+            # TODO: lr_scheduler.state_dict
+            # TODO: data used in plots and prints (maybe collect this is single data structure? dictionary?)
+            # TODO: settings for algorithm (sigma)
+            # TODO: Save into file's directory (not callers)
+            # TODO: Keep track of best model as well as newest model
+            # TODO: Make checkpoint based on time (every 1 minute e.g.)
 
-        loop_end_time = time.perf_counter()
+        # Print to console
         if not args.silent:
-            #IPython.embed()
             print('Episode num: %d\n'
                 'Average reward: %f\n'
                 'Variance in rewards: %f\n'
@@ -442,15 +488,12 @@ def train_loop(args, parent_model, env, eval_fun, optimizer, chkpt_dir):
                 'Unperturbed rank: %s\n' 
                 'Optimizer: %s' %
                 (episodes[-1], reward_average[-1], reward_var[-1], reward_max[-1],
-                reward_min[-1], args.n, args.sigma, args.lr,
+                reward_min[-1], args.agents, args.sigma, args.lr,
                 unperturbed_out['return'], rank_diag, args.optimizer))
             print("Worker time: {}".format(workers_end_time-workers_start_time))
             print("Loop time: {}".format(loop_end_time-loop_start_time))
             print()
 
-        # Empty list of processes, seeds and models and return queue
-        processes, seeds, models = [], [], []
-        return_queue = mp.Queue()
 
 
 
@@ -509,25 +552,25 @@ def gym_rollout(max_episode_length, model, random_seed, return_queue, env, is_an
     state = Variable(torch.from_numpy(state).float(),
                     requires_grad=True).unsqueeze(0)
     retrn = 0
-    nsteps = 0
+    n_observations = 0
     done = False
     # Rollout
-    while not done and nsteps < max_episode_length:
+    while not done and n_observations < max_episode_length:
         # Choose action
         actions = model(state)
         action = actions.max(1)[1].data.numpy()
         # Step
         state, reward, done, _ = env.step(action[0])
         retrn += reward
-        nsteps += 1
+        n_observations += 1
         # Cast state
         state = Variable(torch.from_numpy(state).float(),
                         requires_grad=True).unsqueeze(0)
     return_queue.put({'seed': random_seed, 'return': retrn,
-                    'is_anti': is_antithetic, 'nsteps': nsteps})
+                    'is_anti': is_antithetic, 'n_observations': n_observations})
 
 def train_loopasd(args, parent_model, env, eval_fun, chkpt_dir):
-    for _ in range(args.max_gradient_updates):
+    for _ in range(args.max_generations):
         env = gym.make('CartPole-v0')
         return_queue = mp.Queue()
 

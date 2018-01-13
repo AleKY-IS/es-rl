@@ -16,11 +16,11 @@ def gym_rollout(args, model, random_seed, return_queue, env, is_antithetic, coll
     state = env.reset()
     state = Variable(torch.from_numpy(state).float(), requires_grad=True).unsqueeze(0)
     retrn = 0
-    nsteps = 0
+    n_observations = 0
     done = False
     inputs = None
     # Rollout
-    while not done and nsteps < args.max_episode_length:
+    while not done and n_observations < args.max_episode_length:
         # Collect states as batch inputs 
         if collect_inputs:
             inputs = torch.cat((inputs, state)) if inputs is not None else state
@@ -30,12 +30,12 @@ def gym_rollout(args, model, random_seed, return_queue, env, is_antithetic, coll
         # Step
         state, reward, done, _ = env.step(action[0])
         retrn += reward
-        nsteps += 1
+        n_observations += 1
         # Cast state
         state = Variable(torch.from_numpy(state).float(), requires_grad=True).unsqueeze(0)
-    out = {'seed': random_seed, 'return': retrn, 'is_anti': is_antithetic, 'nsteps': nsteps}
+    out = {'seed': random_seed, 'return': retrn, 'is_anti': is_antithetic, 'n_observations': n_observations}
     if collect_inputs:
-        out['inputs'] = inputs
+        out['inputs'] = inputs.data.numpy()
     return_queue.put(out)
 
 
@@ -82,11 +82,20 @@ def supervised_eval(args, model, random_seed, return_queue, train_loader, is_ant
     correct_ratio = pred.eq(target.data.view_as(pred)).sum()/target.data.size()[0]
     #reward = -F.nll_loss(output, target)
     #reward.data.numpy()[0]
-    out = {'seed': random_seed, 'return': correct_ratio, 'is_anti': is_antithetic, 'nsteps': args.batch_size}
+    out = {'seed': random_seed, 'return': correct_ratio, 'is_anti': is_antithetic, 'n_observations': args.batch_size}
     if collect_inputs:
-        out['inputs'] = data
+        # NOTE It is necessary to convert the torch.autograd.Variable to numpy array 
+        # in order to correctly transfer this data from the worker thread to the main thread.
+        # This is an unfortunate result of how Python pickling handles sending file descriptors.
+        # Torch sends tensors via shared memory instead of writing the values to the queue. 
+        # The steps are roughly:
+        #   1. Background process sends token mp.Queue.
+        #   2. When the main process reads the token, it opens a unix socket to the background process.
+        #   3. The background process sends the file descriptor via the unix socket.
+        out['inputs'] = data.data.numpy()
     return_queue.put(out)
-    print(correct_ratio)
+    #done.wait()
+    #print(correct_ratio)
 
 
 def supervised_test(args, model, test_loader):
