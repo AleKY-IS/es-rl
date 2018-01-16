@@ -15,6 +15,7 @@ dependencies:
 - pytorch
 - torchvision
 - ipython
+- pandas
 - opencv
 - pip
 - pip:
