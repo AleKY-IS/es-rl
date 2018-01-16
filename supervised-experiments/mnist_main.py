@@ -1,22 +1,23 @@
 import argparse
+import datetime
 import os
+import pickle
 import platform
 
-import IPython
-
 import gym
+import IPython
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torch.autograd import Variable
-from torchvision import datasets, transforms
 
 from context import es
 from es.eval_funs import supervised_eval, supervised_test
 from es.models import MNISTNet
 from es.train import train_loop
 from es.utils import get_inputs_from_args
+from torchvision import datasets, transforms
 
 if __name__ == '__main__':
     # Parse inputs
@@ -30,10 +31,15 @@ if __name__ == '__main__':
     parser.add_argument('--nesterov', action='store_true', help='boolean to denote if optimizer momentum is Nesterov')
     parser.add_argument('--weight-decay', type=float, default=0.001, help='optimizer L2 norm weight decay penalty')
 
-    parser.add_argument('--lr-scheduler', type=str, default='ExponentialLR', help='learning rate scheduler')
+    parser.add_argument('--lr-scheduler', type=str, default='ReduceLROnPlateau', help='learning rate scheduler')
     parser.add_argument('--gamma', type=float, default=0.99, help='learning rate decay rate')
-    parser.add_argument('--milestones', type=list, default=50, help='milestones for MultiStepLR')
-    parser.add_argument('--step-size', type=int, default=50, help='step for StepLR')
+    parser.add_argument('--factor', type=float, default=0.1, help='reduction factor [ReduceLROnPlateau]')
+    parser.add_argument('--patience', type=int, default=10, help='patience before lowering learning rate [ReduceLROnPlateau]')
+    parser.add_argument('--threshold', type=float, default=1e-4, help='threshold for comparing best to current [ReduceLROnPlateau]')
+    parser.add_argument('--cooldown', type=int, default=10, help='cooldown after lowering learning rate before able to do it again [ReduceLROnPlateau]')
+    parser.add_argument('--min-lr', type=float, default=1e-6, help='minimal learning rate [ReduceLROnPlateau]')
+    parser.add_argument('--milestones', type=list, default=50, help='milestones on which to lower learning rate[MultiStepLR]')
+    parser.add_argument('--step-size', type=int, default=50, help='step interval on which to lower learning rate[StepLR]')
 
     parser.add_argument('--agents', type=int, default=40, metavar='N', help='number of children, must be even')
     parser.add_argument('--sigma', type=float, default=0.05, metavar='SD', help='initial noise standard deviation')
@@ -43,7 +49,7 @@ if __name__ == '__main__':
     parser.add_argument('--frame-size', type=int, default=84, metavar='FS', help='square size of frames in pixels')
     
     parser.add_argument('--silent', action='store_true', help='Silence print statements during training')
-    parser.add_argument('--test', action='store_true', help='Test the modelender the env, no training')
+    parser.add_argument('--test', action='store_true', help='Test the model (accuracy or env render), no training')
     parser.add_argument('--restore', default='', metavar='RES', help='checkpoint from which to restore')
     parser.add_argument('--cuda', action='store_true', default=False, help='enables CUDA training')
     args = parser.parse_args()
@@ -76,16 +82,25 @@ if __name__ == '__main__':
     print("Num threads = " + str(torch.get_num_threads()))
 
     # Create checkpoint directory if nonexistent
-    chkpt_dir = 'checkpoints/%s/' % args.env_name
+    timestamp = datetime.datetime.now().strftime("%y%m%d-%H%M%S")
+    chkpt_dir = 'checkpoints/{:s}-{:s}/'.format(args.env_name, timestamp)
     if not os.path.exists(chkpt_dir):
         os.makedirs(chkpt_dir)
     
     # Load checkpoint if specified
+    stats = None
     if args.restore:
         try:
-            #file_path = os.path.split(os.path.realpath(__file__))[0]
-            state_dict = torch.load(args.restore)
-            model.load_state_dict(state_dict)
+            file_path = os.path.split(os.path.realpath(__file__))[0]
+            restore_path = file_path+'/'+'/'.join([i for i in args.restore.split('/') if i not in file_path.split('/')])
+            IPython.embed()
+            model_state_dict = torch.load(os.path.join(restore_path, 'model_state_dict.pth'))
+            optimizer_state_dict = torch.load(os.path.join(restore_path, 'optimizer_state_dict.pth'))
+            with open(os.path.join(restore_path, 'stats.pkl'), 'rb') as filename:
+                stats = pickle.load(filename)
+            lr_scheduler.last_epoch = stats['generations'][-1]
+            model.load_state_dict(model_state_dict)
+            optimizer.load_state_dict(optimizer_state_dict)
         except Exception:
             print("Checkpoint restore failed")
 
@@ -105,9 +120,8 @@ if __name__ == '__main__':
         ])),
         batch_size=1000, shuffle=True, **kwargs)
 
-    # IPython.embed()
     # Run test or train
     if args.test:
         supervised_test(args, model, test_loader)
     else:
-        train_loop(args, model, train_loader, supervised_eval, optimizer, chkpt_dir)
+        train_loop(args, model, train_loader, supervised_eval, optimizer, lr_scheduler, chkpt_dir, stats=stats)
