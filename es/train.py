@@ -15,29 +15,13 @@ import torch.nn.functional as F
 import torch.optim
 from torch import nn
 from torch.autograd import Variable
-from .utils import get_lr
-
-
-def print_init(args):
-    if print_every > 0:
-        print("----- Evolver parameters ------")
-        print("Environment:          %s" % args.env_name)
-        print("Population:           %s" % args.model_name)
-        print("Workers:              %d" % args.agents)
-        print("Generations:          %d" % args.max_generations)
-        print("Sigma:                %5.4f" % args.sigma)
-        print("Learning rate:        %5.4f\n" % args.lr)
-        print("Learning rate decay:  %5.4f\n" % args.lr-decay)
-        print("Restore point:        %s\n" % args.restore)
-        print("------- Running evolver -------")
-
-
-def print_iter(args, gen, prtint=1):
-    if prtint and gen % prtint == 0:
-        print("Generation: {:3d} | Reward {: 4.1f} | Time {:4.2f} seconds".format(gen, test_reward, t))
+from .utils import get_lr, plot_stats, save_checkpoint, print_init, print_iter
 
 
 def unperturbed_rank(returns, unperturbed_results):
+    """
+    Returns the rank of the unperturbed model among the pertubations.
+    """
     nth_place = 1
     for r in returns:
         if r > unperturbed_results:
@@ -62,7 +46,7 @@ def fitness_shaping(returns):
     Reference: Natural Evolution Strategies [2014]
     """
     n = len(returns)
-    sorted_indices = np.argsort(-np.array(returns))
+    sorted_indices = np.argsort(-returns)
     u = np.zeros(n)
     for k in range(n):
         u[sorted_indices[k]] = np.max([0, np.log(n/2+1)-np.log(k+1)])
@@ -79,7 +63,7 @@ def perturb_model(args, parent_model, random_seed, env):
     model_class = type(parent_model)
     model1 = model_class(env.observation_space, env.action_space) if hasattr(env, 'observation_space') else model_class()
     model2 = model_class(env.observation_space, env.action_space) if hasattr(env, 'observation_space') else model_class()
-    model1.load_state_dict(parent_model.state_dict())
+    model1.load_state_dict(parent_model.state_dict())  # This does not load the gradients (doesn't matter here though)
     model2.load_state_dict(parent_model.state_dict())
     model1.zero_grad()
     model2.zero_grad()
@@ -87,15 +71,24 @@ def perturb_model(args, parent_model, random_seed, env):
     # Permute all weights of each model by isotropic Gaussian noise
     for param1, param2, pp in zip(model1.es_parameters(), model2.es_parameters(), parent_model.es_parameters()):
         eps = torch.from_numpy(np.random.normal(0, 1, pp.data.size())).float()
-        eps = eps#/pp.grad.data  # Scale by sensitivities
-        #eps = (eps-eps.mean())/eps.std()     # Rescale to zero mean unit variance
-        #print(eps)
+        eps = eps/pp.grad.data    # Scale by sensitivities
+        eps = eps/eps.std()       # Rescale to zero mean unit variance
         param1.data += args.sigma*eps
         param2.data -= args.sigma*eps
+        assert not np.isnan(param1.data).any()
+        assert not np.isinf(param1.data).any()
+        assert not np.isnan(param2.data).any()
+        assert not np.isinf(param2.data).any()
     return [model1, model2]
 
 
 def compute_sensitivities(parent_model, inputs):
+    """
+    Computes the output-weight sensitivities of the model given a mini-batch
+    of inputs.
+    Currently implements the SM-G-ABS version of the sensitivities.
+    Reference: Safe Mutations for Deep and Recurrent Neural Networks through Output Gradients [2017]
+    """
     # Forward pass on input batch
     outputs = parent_model(inputs)
     batch_size = outputs.data.size()[0]
@@ -103,9 +96,8 @@ def compute_sensitivities(parent_model, inputs):
     do_square = True
     do_square_root = True
     do_abs = False
-    do_normalize = False
-    # do_squash = False
-    do_numerical = False
+    do_normalize = True
+    do_numerical = True
     # Backward pass for each output unit (and accumulate gradients)
     sensitivities = []
     for idx in range(n_outputs):
@@ -114,75 +106,54 @@ def compute_sensitivities(parent_model, inputs):
         t[:, idx] = torch.ones(batch_size, 1)
         # Compute dy_t/dw on batch
         outputs.backward(t, retain_graph=True)
-        # Get computed sensitivities
+        # Get computed sensitivities and sum into those of other output units
         for pid, param in enumerate(parent_model.parameters()):
             sens = param.grad.data.clone()  # Clone to sum correctly
             if do_square:
                 sens = sens.pow(2)
             if do_abs:
                 sens = sens.abs()
-            # sens = sens.pow(2) if do_square else sens
-            # sens = sens.abs() if do_abs else sens
             if idx == 0:
                 sensitivities.append(sens)
             else:
                 sensitivities[pid] += sens
 
-        # if do_abs:
-        #     for param in parent_model.parameters():
-        #         param.grad = param.grad.abs()
-
-
-    if do_square_root: # (SM-G-SUM)
+    if do_square_root:
         for pid in range(len(sensitivities)):
             sensitivities[pid] = sensitivities[pid].sqrt()
-        # for param in parent_model.parameters():
-        #     param.grad = param.grad.sqrt()
-
-    # if do_squash:
-    #     for param in parent_model.parameters():
-    #         param.grad = param.grad/param.grad.max()
-
-    # if do_square: # (SM-G-SUM)
-    #     for param in parent_model.parameters():
-    #         param.grad = param.grad.pow(2)
-
+    
     # Normalize
     if do_normalize:
-        for sens in sensitivities:
-            sens = (sens-sens.mean())/sens.max()
+        for pid in range(len(sensitivities)):
+            sensitivities[pid] = sensitivities[pid]/sensitivities[pid].max()
     
     # Numerical considerations
     if do_numerical:
-        for sens in sensitivities:
-            # Add small number so as not to divide by extremely small numbers
-            sens[sens == 0] = 10**-5
+        for pid in range(len(sensitivities)):
+            # Absolutely insensitive parameters are unscaled
+            sensitivities[pid][sensitivities[pid] < 1e-5] = 1
             # Clip sensitivities at a large constant value
-            sens[sens > 10**5] = 10**5
+            sensitivities[pid][sensitivities[pid] > 1e5] = 1e5
             # Set any sensitivities of zero to one to avoid dividing by zero
             # param.grad.data[param.grad.data == 0] = 1
 
     # Set gradients
+    parent_model.zero_grad()
     for pid, param in enumerate(parent_model.parameters()):
         param.grad.data = sensitivities[pid].clone()
-        #param.grad.data = torch.ones(sensitivities[pid].size())
-
-    # mx = 0
-    # mn = 10**10
-    # for param in parent_model.parameters():
-    #     mx = param.grad.data.max() if param.grad.data.max() > mx else mx
-    #     mn = param.grad.data.max() if param.grad.data.max() < mn else mn
-    # print(mx)
-    # print(mn)
+        assert not np.isnan(param.grad.data).any()
+        assert not np.isinf(param.grad.data).any()
     return parent_model
 
 
-def compute_gradients(args, parent_model, returns, random_seeds, is_anti_list):  
+def compute_gradients(args, parent_model, returns, random_seeds, is_anti_list):
+    """
+    Computes the gradients of the weights of the model in order to improve the model return.
+    """
     # Verify input
     batch_size = len(returns)
     assert batch_size == args.agents
     assert len(random_seeds) == batch_size
-    parent_model.zero_grad()
 
     # Shape returns and get rank of unperturbed model
     shaped_returns = fitness_shaping(returns)
@@ -200,11 +171,13 @@ def compute_gradients(args, parent_model, returns, random_seeds, is_anti_list):
         multiplier = -1 if is_anti_list[i] else 1
         reward = shaped_returns[i]
         for layer, param in enumerate(parent_model.parameters()):
-            eps = np.random.normal(0, 1, param.data.size())
-            grad = 1/(args.agents*args.sigma) * (reward*multiplier*eps)
-            gradients[layer] += torch.from_numpy(grad).float()
+            eps = torch.from_numpy(np.random.normal(0, 1, param.data.size())).float()
+            eps = eps/param.grad.data   # Scale by sensitivities
+            eps = eps/eps.std()         # Rescale to zero mean unit 
+            gradients[layer] += 1/(args.agents*args.sigma) * (reward*multiplier*eps)
 
     # Set gradients
+    parent_model.zero_grad()
     for layer, param in enumerate(parent_model.parameters()):
         param.grad.data = - gradients[layer]
 
@@ -226,14 +199,18 @@ def train_loop(args, parent_model, env, eval_fun, optimizer, lr_scheduler, chkpt
         stats = {}
         for n in stat_names:
             stats[n] = []
+        print_init(args, parent_model, optimizer, lr_scheduler)
     
     # Initialize return queue for multiprocessing
     return_queue = mp.Queue()
     
+    # Parameterize noise variance to ensure positivity
+    beta = 2*np.log(args.sigma)  # sigma**2 = np.exp(beta)
+
     # Evaluate parent model
     eval_fun(args, parent_model, 'dummy_seed', return_queue, env, 'dummy_neg', collect_inputs=True)
     unperturbed_out = return_queue.get()
-    max_unperturbed_return = 0
+    max_unperturbed_return = -1e8
     
     # Start training loop
     n_episodes = 0
@@ -305,13 +282,21 @@ def train_loop(args, parent_model, env, eval_fun, optimizer, lr_scheduler, chkpt
         returns.pop(unperturbed_index)
         is_anti_list.pop(unperturbed_index)
         i_observations.pop(unperturbed_index)
+        # Cast to numpy
+        returns = np.array(returns)
         
         # Compute gradients, update parameters and learning rate
         stats['lr'].append(get_lr(optimizer))
         compute_gradients(args, parent_model, returns, seeds, is_anti_list)
         optimizer.step()
+        if (returns < 0).all():
+            returns = -returns
+            unperturbed_out['return'] = -unperturbed_out['return']
+        # IPython.embed()
         if type(lr_scheduler) == torch.optim.lr_scheduler.ReduceLROnPlateau:
-            lr_scheduler.step(unperturbed_out['return'])
+            #lr_scheduler.step(unperturbed_out['return'])
+            # TODO Check that this steps correctly (it steps every patience times and what if returns are negative)
+            lr_scheduler.step(returns.mean())
         else:
             lr_scheduler.step()
 
@@ -320,140 +305,44 @@ def train_loop(args, parent_model, env, eval_fun, optimizer, lr_scheduler, chkpt
         
         # Keep track of best model
         if unperturbed_out['return'] >= max_unperturbed_return:
-            best_model_state_dict = parent_model.state_dict()
-            best_optimizer_state_dict = optimizer.state_dict()
+            best_model_stdct = parent_model.state_dict()
+            best_optimizer_stdct = optimizer.state_dict()
             # TODO: Also save stats in "best" version
             max_unperturbed_return = unperturbed_out['return']
 
         # Store statistics
+        # TODO Fix restoring and resuming
         n_episodes += len(returns)
         n_observations += sum(i_observations)
         stats['generations'].append(n_generation)
         stats['episodes'].append(n_episodes)
         stats['observations'].append(n_observations)
         stats['walltimes'].append(time.time() - start_time)
-        stats['reward_avg'].append(np.mean(returns))
-        stats['reward_var'].append(np.var(returns))
-        stats['reward_max'].append(np.max(returns))
-        stats['reward_min'].append(np.min(returns))
+        stats['reward_avg'].append(returns.mean())
+        stats['reward_var'].append(returns.var())
+        stats['reward_max'].append(returns.max())
+        stats['reward_min'].append(returns.min())
         stats['reward_unp'].append(unperturbed_out['return'])
         stats['unp_rank'].append(rank)
-        stats['sigma'].append(args.sigma)
+        stats['sigma'].append(np.exp(beta))
         
-        if hasattr(args, 'variable_ep_len') and args.variable_ep_len:
-            args.max_episode_length = int(5*max(num_frames))
+        # Adjust max length of episodes
+        if hasattr(args, 'not_var_ep_len') and not args.not_var_ep_len:
+            args.batch_size = int(5*max(i_observations))
 
         # Plot
         if last_checkpoint_time < time.time() - 10:
-            # NOTE: Possible x-axis are: generations, episodes, observations, time
-            fig = plt.figure()
-            pltUnp, = plt.plot(stats['episodes'], stats['reward_unp'], label='parent')
-            pltAvg, = plt.plot(stats['episodes'], stats['reward_avg'], label='average')
-            pltMax, = plt.plot(stats['episodes'], stats['reward_max'], label='max')
-            pltMin, = plt.plot(stats['episodes'], stats['reward_min'], label='min')
-            plt.ylabel('rewards')
-            plt.xlabel('episodes')
-            plt.legend(handles=[pltUnp, pltAvg, pltMax,pltMin])
-            fig.savefig(chkpt_dir+'/rew_eps.pdf')
-            plt.close(fig)
-
-            fig = plt.figure()
-            walltimes_plot = np.array(stats['walltimes'])/60
-            pltUnp, = plt.plot(walltimes_plot, stats['reward_unp'], label='parent')
-            pltAvg, = plt.plot(walltimes_plot, stats['reward_avg'], label='average')
-            pltMax, = plt.plot(walltimes_plot, stats['reward_max'], label='max')
-            pltMin, = plt.plot(walltimes_plot, stats['reward_min'], label='min')
-            plt.ylabel('rewards')
-            plt.xlabel('time [min]')
-            plt.legend(handles=[pltUnp, pltAvg, pltMax,pltMin])
-            fig.savefig(chkpt_dir+'/rew_tim.pdf')
-            plt.close(fig)
-
-            fig = plt.figure()
-            pltUnp, = plt.plot(stats['observations'], stats['reward_unp'], label='parent')
-            pltAvg, = plt.plot(stats['observations'], stats['reward_avg'], label='average')
-            pltMax, = plt.plot(stats['observations'], stats['reward_max'], label='max')
-            pltMin, = plt.plot(stats['observations'], stats['reward_min'], label='min')
-            plt.ylabel('rewards')
-            plt.xlabel('observations')
-            plt.legend(handles=[pltUnp, pltAvg, pltMax,pltMin])
-            fig.savefig(chkpt_dir+'/rew_obs.pdf')
-            plt.close(fig)
-
-            fig = plt.figure()
-            pltUnp, = plt.plot(stats['generations'], stats['reward_unp'], label='parent')
-            pltAvg, = plt.plot(stats['generations'], stats['reward_avg'], label='average')
-            pltMax, = plt.plot(stats['generations'], stats['reward_max'], label='max')
-            pltMin, = plt.plot(stats['generations'], stats['reward_min'], label='min')
-            plt.ylabel('rewards')
-            plt.xlabel('generations')
-            plt.legend(handles=[pltUnp, pltAvg, pltMax,pltMin])
-            fig.savefig(chkpt_dir+'/rew_gen.pdf')
-            plt.close(fig)
-
-            fig = plt.figure()
-            pltVar, = plt.plot(stats['generations'], stats['reward_var'], label='reward variance')
-            plt.ylabel('reward variance')
-            plt.xlabel('generations')
-            plt.legend(handles=[pltVar])
-            fig.savefig(chkpt_dir+'/rewvar_gen.pdf')
-            plt.close(fig)
-
-            fig = plt.figure()
-            pltVar, = plt.plot(stats['generations'], stats['unp_rank'], label='unperturbed rank')
-            plt.ylabel('unperturbed rank')
-            plt.xlabel('generations')
-            plt.legend(handles=[pltVar])
-            fig.savefig(chkpt_dir+'/unprank_gen.pdf')
-            plt.close(fig)
-
-            fig = plt.figure()
-            pltVar, = plt.plot(stats['generations'], stats['sigma'], label='sigma')
-            plt.ylabel('sigma')
-            plt.xlabel('generations')
-            plt.legend(handles=[pltVar])
-            fig.savefig(chkpt_dir+'/sigma_gen.pdf')
-            plt.close(fig)
-            # TODO: Plot of time used
-            # DONE: Plot of reward variance
-            # TODO: Plot of smoothed reward
-            # DONE: Plot unperturbed rank
-            # DONE: Plot of sigma
+            plot_stats(stats, chkpt_dir)
 
         # Save checkpoint (every 5 minutes)
         if last_checkpoint_time < time.time() - 10:
-            # Save latest model and optimizer state
-            torch.save(parent_model.state_dict(), os.path.join(chkpt_dir, 'model_state_dict.pth'))
-            torch.save(optimizer.state_dict(), os.path.join(chkpt_dir, 'optimizer_state_dict.pth'))
-            # torch.save(lr_scheduler.state_dict(), os.path.join(chkpt_dir, 'lr_scheduler_state_dict.pth'))
-            # Save best model
-            torch.save(best_model_state_dict, os.path.join(chkpt_dir, 'best_model_state_dict.pth'))
-            torch.save(best_optimizer_state_dict, os.path.join(chkpt_dir, 'best_optimizer_state_dict.pth'))
-            # Currently, learning rate scheduler has no state_dict and cannot be saved. It can be restored
-            # by setting lr_scheduler.last_epoch = last generation index.
-            with open(os.path.join(chkpt_dir, 'stats.pkl'), 'wb') as filename:
-                pickle.dump(stats, filename, pickle.HIGHEST_PROTOCOL)
+            save_checkpoint(parent_model, optimizer, best_model_stdct, best_optimizer_stdct, stats, chkpt_dir)
             last_checkpoint_time = time.time()
 
         # Print to console
         if not args.silent:
-            print('Episode num: %d\n'
-                'Average reward: %f\n'
-                'Variance in rewards: %f\n'
-                'Max reward: %f\n'
-                'Min reward: %f\n'
-                'Batch size: %d\n'
-                'Sigma: %f\n'
-                'Learning rate: %f\n'
-                'Unperturbed reward: %f\n'
-                'Unperturbed rank: %s\n' 
-                'Optimizer: %s' %
-                (stats['episodes'][-1], stats['reward_avg'][-1], stats['reward_var'][-1], stats['reward_max'][-1],
-                stats['reward_min'][-1], args.agents, stats['sigma'][-1], stats['lr'][-1],
-                unperturbed_out['return'], rank_diag, args.optimizer))
-            print("Worker time: {}".format(workers_end_time - workers_start_time))
-            print("Loop time: {}".format(time.time() - loop_start_time))
-            print()
+            print_iter(args, stats, workers_start_time, workers_end_time, loop_start_time)
+
 
         
         
