@@ -56,7 +56,7 @@ def gym_render(args, model, env):
             this_model_num_steps = 0
             done = False
             # Rollout
-            while not done and this_model_num_steps < args.max_episode_length:
+            while not done and this_model_num_steps < args.batch_size:
                 # Choose action
                 actions = model(state)
                 action = actions.max(1)[1].data.numpy()
@@ -82,11 +82,9 @@ def supervised_eval(args, model, random_seed, return_queue, train_loader, is_ant
     (data, target) = next(iter(train_loader))
     data, target = Variable(data), Variable(target)
     output = model(data)
-    pred = output.data.max(1, keepdim=True)[1] # get the index of the max log-probability
-    correct_ratio = pred.eq(target.data.view_as(pred)).sum()/target.data.size()[0]
-    #reward = -F.nll_loss(output, target)
-    #reward.data.numpy()[0]
-    out = {'seed': random_seed, 'return': correct_ratio, 'is_anti': is_antithetic, 'n_observations': args.batch_size}
+    reward = - F.nll_loss(output, target)
+    reward = reward.data.numpy()[0]
+    out = {'seed': random_seed, 'return': reward, 'is_anti': is_antithetic, 'n_observations': args.batch_size}
     if collect_inputs:
         # NOTE It is necessary to convert the torch.autograd.Variable to numpy array 
         # in order to correctly transfer this data from the worker thread to the main thread.
@@ -97,6 +95,11 @@ def supervised_eval(args, model, random_seed, return_queue, train_loader, is_ant
         #   2. When the main process reads the token, it opens a unix socket to the background process.
         #   3. The background process sends the file descriptor via the unix socket.
         out['inputs'] = data.data.numpy()
+        # Also print correct prediction ratio
+        if not args.silent:
+            pred = output.data.max(1, keepdim=True)[1] # get the index of the max log-probability
+            correct_ratio = pred.eq(target.data.view_as(pred)).sum()/target.data.size()[0]
+            print(" | Acc {:4.2f}%".format(correct_ratio*100), end="")
     return_queue.put(out)
 
 
