@@ -1,23 +1,22 @@
-from __future__ import absolute_import, division, print_function
-
 import argparse
-import os
-import platform
 import datetime
+import os
+import pickle
+import platform
+
+import IPython
 
 import gym
-import IPython
 import torch
-import torch.optim as optim
 import torch.multiprocessing as mp
 import torch.nn.functional as F
-from torch.autograd import Variable
-
+import torch.optim as optim
 from context import es
 from es.envs import create_atari_env
 from es.eval_funs import gym_render, gym_rollout
 from es.models import DQN, FFN
 from es.train import train_loop
+from torch.autograd import Variable
 
 
 if __name__ == '__main__':
@@ -34,10 +33,10 @@ if __name__ == '__main__':
 
     parser.add_argument('--lr-scheduler', type=str, default='ReduceLROnPlateau', help='learning rate scheduler')
     parser.add_argument('--gamma', type=float, default=0.99, help='learning rate decay rate')
-    parser.add_argument('--factor', type=float, default=0.1, help='reduction factor [ReduceLROnPlateau]')
-    parser.add_argument('--patience', type=int, default=10, help='patience before lowering learning rate [ReduceLROnPlateau]')
+    parser.add_argument('--factor', type=float, default=0.8, help='reduction factor [ReduceLROnPlateau]')
+    parser.add_argument('--patience', type=int, default=50, help='patience before lowering learning rate [ReduceLROnPlateau]')
     parser.add_argument('--threshold', type=float, default=1e-4, help='threshold for comparing best to current [ReduceLROnPlateau]')
-    parser.add_argument('--cooldown', type=int, default=10, help='cooldown after lowering learning rate before able to do it again [ReduceLROnPlateau]')
+    parser.add_argument('--cooldown', type=int, default=25, help='cooldown after lowering learning rate before able to do it again [ReduceLROnPlateau]')
     parser.add_argument('--min-lr', type=float, default=1e-6, help='minimal learning rate [ReduceLROnPlateau]')
     parser.add_argument('--milestones', type=list, default=50, help='milestones on which to lower learning rate[MultiStepLR]')
     parser.add_argument('--step-size', type=int, default=50, help='step interval on which to lower learning rate[StepLR]')
@@ -46,6 +45,7 @@ if __name__ == '__main__':
     parser.add_argument('--sigma', type=float, default=0.05, metavar='SD', help='initial noise standard deviation')
     parser.add_argument('--batch-size', type=int, default=10000, metavar='BS', help='batch size agent evaluation (max episode steps for RL setting rollouts)')
     parser.add_argument('--max-generations', type=int, default=100000, metavar='MG', help='maximum number of generations')
+    parser.add_argument('--not-var-ep-len', action='store_true', help='maximum number of generations')
 
     parser.add_argument('--frame-size', type=int, default=84, metavar='FS', help='square size of frames in pixels')
     
@@ -90,27 +90,32 @@ if __name__ == '__main__':
     print("Num threads = " + str(torch.get_num_threads()))
 
     # Create checkpoint directory if nonexistent
-    timestamp = datetime.datetime.now().strftime("%y%m%d-%H%M%S")
-    chkpt_dir = 'checkpoints/{:s}-{:s}/'.format(args.env_name, timestamp)
-    if not os.path.exists(chkpt_dir):
-        os.makedirs(chkpt_dir)
+    if not args.restore:
+        timestamp = datetime.datetime.now().strftime("%y%m%d-%H%M%S")
+        chkpt_dir = 'checkpoints/{:s}-{:s}/'.format(args.env_name, timestamp)
+        if not os.path.exists(chkpt_dir):
+            os.makedirs(chkpt_dir)
     
     # Load checkpoint if specified
     stats = None
     if args.restore:
-        try:
-            file_path = os.path.split(os.path.realpath(__file__))[0]
-            restore_path = file_path+'/'+'/'.join([i for i in args.restore.split('/') if i not in file_path.split('/')])
-            IPython.embed()
-            model_state_dict = torch.load(os.path.join(restore_path, 'model_state_dict.pth'))
-            optimizer_state_dict = torch.load(os.path.join(restore_path, 'optimizer_state_dict.pth'))
-            with open(os.path.join(restore_path, 'stats.pkl'), 'rb') as filename:
+        file_path = os.path.split(os.path.realpath(__file__))[0]
+        chkpt_dir = file_path+'/'+'/'.join([i for i in args.restore.split('/') if i not in file_path.split('/')])
+        if args.test:
+            model_state_dict = torch.load(os.path.join(chkpt_dir, 'best_model_state_dict.pth'))
+            optimizer_state_dict = torch.load(os.path.join(chkpt_dir, 'best_optimizer_state_dict.pth'))
+        else:
+            model_state_dict = torch.load(os.path.join(chkpt_dir, 'model_state_dict.pth'))
+            optimizer_state_dict = torch.load(os.path.join(chkpt_dir, 'optimizer_state_dict.pth'))
+            with open(os.path.join(chkpt_dir, 'stats.pkl'), 'rb') as filename:
                 stats = pickle.load(filename)
+        try:
             lr_scheduler.last_epoch = stats['generations'][-1]
             model.load_state_dict(model_state_dict)
             optimizer.load_state_dict(optimizer_state_dict)
         except Exception:
             print("Checkpoint restore failed")
+            raise Exception
 
     # Run test or train
     if args.test:
