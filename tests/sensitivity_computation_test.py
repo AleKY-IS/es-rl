@@ -76,14 +76,14 @@ def test_single_layer(testid, batch_size, in_dim, out_dim, do_debug=False):
 
     # Print checks
     is_test_passed = True
-    if (model_y.data.numpy() == control_y.data.numpy()).all():
+    if (np.abs(model_y.data.numpy() - control_y.data.numpy()) < 1e-4).all():
         print("✓ Model and control output match!")
     else:
         print("✗ Model and control output do not match!")
         is_test_passed = False
     for idx, param in enumerate(model.parameters()):
         method_p_grad = param.grad.data.numpy()
-        if (method_p_grad == control_p_grad[idx].data.numpy()).all():
+        if (np.abs(method_p_grad - control_p_grad[idx].data.numpy()) < 1e-4).all():
             print("✓ Model and control sensitivities match!")
         else:
             print("✗ Model and control sensitivities do not match!")
@@ -102,7 +102,9 @@ if __name__ == '__main__':
     test_single_layer(testid=2, batch_size=1, in_dim=2, out_dim=1)
     test_single_layer(testid=3, batch_size=1, in_dim=1, out_dim=2)
     test_single_layer(testid=4, batch_size=1, in_dim=2, out_dim=3)
-    test_single_layer(testid=5, batch_size=2, in_dim=3, out_dim=2)
+    test_single_layer(testid=5, batch_size=2, in_dim=2, out_dim=3)
+    test_single_layer(testid=6, batch_size=10, in_dim=2, out_dim=3)
+    test_single_layer(testid=7, batch_size=2, in_dim=10, out_dim=10)
 
 
 
