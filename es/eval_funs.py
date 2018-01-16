@@ -18,12 +18,16 @@ def gym_rollout(args, model, random_seed, return_queue, env, is_antithetic, coll
     retrn = 0
     n_observations = 0
     done = False
-    inputs = None
+    if collect_inputs:
+        prealdim = (args.batch_size,)
+        for d in state.size()[1:]:
+            prealdim = prealdim + (d,)
+        inputs = torch.zeros(prealdim)
     # Rollout
-    while not done and n_observations < args.max_episode_length:
+    while not done and n_observations < args.batch_size:
         # Collect states as batch inputs 
         if collect_inputs:
-            inputs = torch.cat((inputs, state)) if inputs is not None else state
+            inputs[n_observations,] = state.data
         # Choose action
         actions = model(state)
         action = actions.max(1)[1].data.numpy()
@@ -35,7 +39,7 @@ def gym_rollout(args, model, random_seed, return_queue, env, is_antithetic, coll
         state = Variable(torch.from_numpy(state).float(), requires_grad=True).unsqueeze(0)
     out = {'seed': random_seed, 'return': retrn, 'is_anti': is_antithetic, 'n_observations': n_observations}
     if collect_inputs:
-        out['inputs'] = inputs.data.numpy()
+        out['inputs'] = inputs.numpy()
     return_queue.put(out)
 
 
@@ -94,8 +98,6 @@ def supervised_eval(args, model, random_seed, return_queue, train_loader, is_ant
         #   3. The background process sends the file descriptor via the unix socket.
         out['inputs'] = data.data.numpy()
     return_queue.put(out)
-    #done.wait()
-    #print(correct_ratio)
 
 
 def supervised_test(args, model, test_loader):
