@@ -27,6 +27,7 @@ def create_atari_env(env_id, square_size=42):
     env = Unvectorize(env)
     return env
 
+
 def create_classical_control_env(env_id):
     env = gym.make(env_id)
     return env
