@@ -12,6 +12,9 @@ import torch
 
 
 def print_init(args, model, optimizer, lr_scheduler):
+    """
+    Print the initial message when training is started
+    """
     print("================= Evolver ==================")
     print("Environment:          {:s}".format(args.env_name))
     print("Workers:              {:d}".format(args.agents))
@@ -30,6 +33,9 @@ def print_init(args, model, optimizer, lr_scheduler):
 
 
 def print_iter(args, stats, workers_start_time, workers_end_time, loop_start_time):
+    """
+    Print information on a generation
+    """
     print()
     try:
         s = "Gen {:5d} | Obs {:9d} | F {:6.2f} | Avg {:6.2f} | Max {:6.2f} | Min {:6.2f} | Var {:7.2f} | Rank {:3d} | Sig {:5.4f} | LR {:5.4f}".format(
@@ -41,7 +47,7 @@ def print_iter(args, stats, workers_start_time, workers_end_time, loop_start_tim
 
 def get_inputs_from_args(method, args):
     """
-    Get dict of inputs from args that match class __init__ method
+    Get dict of inputs from args that match class `__init__` method
     """
     ins = inspect.getfullargspec(method)
     num_ins = len(ins.args)
@@ -93,6 +99,10 @@ def load_checkpoint(restore_dir, file_path, model, optimizer, lr_scheduler, load
 
 
 def save_checkpoint(parent_model, optimizer, best_model_stdct, best_optimizer_stdct, stats, chkpt_dir):
+    """
+    Save a checkpoint of the `parent_model` and `optimizer` in the latest and best versions along with 
+    statistics in the `stats` dictionary.
+    """
     # Save latest model and optimizer state
     torch.save(parent_model.state_dict(), os.path.join(chkpt_dir, 'model_state_dict.pth'))
     torch.save(optimizer.state_dict(), os.path.join(chkpt_dir, 'optimizer_state_dict.pth'))
@@ -107,6 +117,11 @@ def save_checkpoint(parent_model, optimizer, best_model_stdct, best_optimizer_st
 
 
 def moving_average(y, window=20, center=True):
+    """
+    Compute a moving average with of `window` observations in `y`. If 'centered=True`, the 
+    average is computed on `window/2` observations before and after the value of `y` in question. 
+    If `centered=False`, the average is computed on the `window` previous observations.
+    """
     if type(y) != list:
         y = list(y)
     return pd.Series(y).rolling(window=window, center=center).mean()
@@ -126,104 +141,109 @@ def plot_stats(stats, chkpt_dir):
     - Learning rate
     - Total wall clock time
     - Wall clock time per generation
+
+    Possible x-axes are:
+    - Generations
+    - Episodes
+    - Observations
+    - Walltimes
     """
 
+    # Plot settings
     plt.rc('font', family='sans-serif')
     plt.rc('xtick', labelsize='x-small')
     plt.rc('ytick', labelsize='x-small')
     figsize = (4, 3)
+    pstats = stats.copy()
+    x = 'generations'
+    back_alpha = 0.3
+
+    # Invert sign on negative returns (negative returns indicate a converted minimization problem)
+    if (np.array(pstats['return_max']) < 0).all():
+        for k in ['return_unp', 'return_avg', 'return_min', 'return_max']:
+            pstats[k] = [-s for s in pstats[k]]
+    
     # NOTE: Possible x-axis are: generations, episodes, observations, walltimes
-    for x in ['generations', 'observations', 'walltimes']:
-        fig = plt.figure(figsize=figsize)
-        pltUnp, = plt.plot(stats[x], stats['return_unp'], label='parent')
-        pltAvg, = plt.plot(stats[x], stats['return_avg'], label='average')
-        pltMax, = plt.plot(stats[x], stats['return_max'], label='max')
-        pltMin, = plt.plot(stats[x], stats['return_min'], label='min')
-        plt.ylabel('Returns')
-        plt.xlabel(x.capitalize())
-        plt.legend(handles=[pltUnp, pltAvg, pltMax, pltMin])
-        fig.savefig(chkpt_dir+'/rew_' + x[0:3] + '.pdf')
-        plt.close(fig)
 
-        fig = plt.figure()
-        pltUnp, = plt.plot(stats[x], stats['return_unp'], label='parent')
-        plt.ylabel('Returns')
-        plt.xlabel(x.capitalize())
-        plt.legend(handles=[pltUnp])
-        fig.savefig(chkpt_dir+'/rewpar_' + x[0:3] + '.pdf')
-        plt.close(fig)
-
-        fig = plt.figure()
-        pltUnp, = plt.plot(stats[x], moving_average(stats['return_unp']), label='smoothed parent')
-        pltAvg, = plt.plot(stats[x], moving_average(stats['return_avg']), label='smoothed average')
-        pltMax, = plt.plot(stats[x], moving_average(stats['return_max']), label='smoothed max')
-        pltMin, = plt.plot(stats[x], moving_average(stats['return_min']), label='smoothed min')
-        plt.gca().set_prop_cycle(None)
-        pltUnpBack, = plt.plot(stats[x], stats['return_unp'], alpha=0.3, label='parent')
-        pltAvgBack, = plt.plot(stats[x], stats['return_avg'], alpha=0.3, label='average')
-        pltMaxBack, = plt.plot(stats[x], stats['return_max'], alpha=0.3, label='max')
-        pltMinBack, = plt.plot(stats[x], stats['return_min'], alpha=0.3, label='min')
-        plt.ylabel('Returns')
-        plt.xlabel(x.capitalize())
-        plt.legend(handles=[pltUnp, pltAvg, pltMax, pltMin, pltUnpBack, pltAvgBack, pltMaxBack, pltMinBack])
-        fig.savefig(chkpt_dir+'/rewsmo_' + x[0:3] + '.pdf')
-        plt.close(fig)
-
-        #IPython.embed()
-        fig = plt.figure()
-        pltUnpS, = plt.plot(stats[x], moving_average(stats['return_unp']), alpha=1, label='smoothed parent')
-        plt.gca().set_prop_cycle(None)
-        pltUnp, = plt.plot(stats[x], stats['return_unp'], alpha=.3, label='raw parent')
-        plt.ylabel('Returns')
-        plt.xlabel(x.capitalize())
-        plt.legend(handles=[pltUnpS, pltUnp])
-        fig.savefig(chkpt_dir+'/rewparsmo_' + x[0:3] + '.pdf')
-        plt.close(fig)
 
     fig = plt.figure()
-    pltVar, = plt.plot(stats['generations'], stats['return_var'], label='return variance')
+    pltUnp, = plt.plot(pstats[x], moving_average(pstats['return_unp']), label='parent ma')
+    pltAvg, = plt.plot(pstats[x], moving_average(pstats['return_avg']), label='average ma')
+    pltMax, = plt.plot(pstats[x], moving_average(pstats['return_max']), label='max ma')
+    pltMin, = plt.plot(pstats[x], moving_average(pstats['return_min']), label='min ma')
+    plt.gca().set_prop_cycle(None)
+    pltUnpBack, = plt.plot(pstats[x], pstats['return_unp'], alpha=back_alpha, label='parent')
+    pltAvgBack, = plt.plot(pstats[x], pstats['return_avg'], alpha=back_alpha, label='average')
+    pltMaxBack, = plt.plot(pstats[x], pstats['return_max'], alpha=back_alpha, label='max')
+    pltMinBack, = plt.plot(pstats[x], pstats['return_min'], alpha=back_alpha, label='min')
+    plt.ylabel('Return')
+    plt.xlabel(x.capitalize())
+    plt.legend(handles=[pltUnp, pltAvg, pltMax, pltMin, pltUnpBack, pltAvgBack, pltMaxBack, pltMinBack])
+    fig.savefig(chkpt_dir + x[0:3] + '_rew' + '.pdf')
+    plt.close(fig)
+
+    fig = plt.figure()
+    pltUnpS, = plt.plot(pstats[x], moving_average(pstats['return_unp']), alpha=1, label='parent ma')
+    plt.gca().set_prop_cycle(None)
+    pltUnp, = plt.plot(pstats[x], pstats['return_unp'], alpha=back_alpha, label='parent raw')
+    plt.ylabel('Return')
+    plt.xlabel(x.capitalize())
+    plt.legend(handles=[pltUnpS, pltUnp])
+    fig.savefig(chkpt_dir + x[0:3] + '_rew_par' + '.pdf')
+    plt.close(fig)
+
+    fig = plt.figure()
+    pltVarS, = plt.plot(pstats['generations'], moving_average(pstats['return_var']), label='ma')
+    plt.gca().set_prop_cycle(None)
+    pltVar, = plt.plot(pstats['generations'], pstats['return_var'], alpha=back_alpha, label='raw')
     plt.ylabel('Return variance')
     plt.xlabel('Generations')
-    plt.legend(handles=[pltVar])
-    fig.savefig(chkpt_dir+'/rewvar_gen.pdf')
+    plt.legend(handles=[pltVarS, pltVar])
+    fig.savefig(chkpt_dir + x[0:3] + '_rew_var.pdf')
     plt.close(fig)
 
     fig = plt.figure()
-    pltVar, = plt.plot(stats['generations'], stats['unp_rank'], label='unperturbed rank')
+    pltRankS, = plt.plot(pstats['generations'], moving_average(pstats['unp_rank']), label='ma')
+    plt.gca().set_prop_cycle(None)
+    pltRank, = plt.plot(pstats['generations'], pstats['unp_rank'], alpha=back_alpha, label='raw')
     plt.ylabel('Unperturbed rank')
     plt.xlabel('Generations')
-    plt.legend(handles=[pltVar])
-    fig.savefig(chkpt_dir+'/unprank_gen.pdf')
+    plt.legend(handles=[pltRankS, pltRank])
+    fig.savefig(chkpt_dir + x[0:3] + '_unprank.pdf')
     plt.close(fig)
 
     fig = plt.figure()
-    pltVar, = plt.plot(stats['generations'], stats['sigma'], label='sigma')
-    plt.ylabel('Sigma')
-    plt.xlabel('Generations')
-    plt.legend(handles=[pltVar])
-    fig.savefig(chkpt_dir+'/sigma_gen.pdf')
-    plt.close(fig)
-
-    fig = plt.figure()
-    pltVar, = plt.plot(stats['generations'], stats['lr'], label='lr')
-    plt.ylabel('learning rate')
-    plt.xlabel('Generations')
-    plt.legend(handles=[pltVar])
-    fig.savefig(chkpt_dir+'/lr_gen.pdf')
-    plt.close(fig)
-
-    fig = plt.figure()
-    pltVar, = plt.plot(stats['generations'], stats['walltimes'], label='lr')
-    plt.ylabel('Walltime')
-    plt.xlabel('Generations')
-    plt.legend(handles=[pltVar])
-    fig.savefig(chkpt_dir+'/time_gen.pdf')
-    plt.close(fig)
-
-    fig = plt.figure()
-    pltVar, = plt.plot(stats['generations'][:-1], np.diff(stats['walltimes']), label='lr')
+    pltVar, = plt.plot(pstats['generations'][:-1], moving_average(np.diff(pstats['walltimes'])), label='ma')
+    plt.gca().set_prop_cycle(None)
+    pltVar, = plt.plot(pstats['generations'][:-1], np.diff(pstats['walltimes']), alpha=back_alpha, label='raw')
     plt.ylabel('Walltime per generation')
     plt.xlabel('Generations')
     plt.legend(handles=[pltVar])
-    fig.savefig(chkpt_dir+'/timeper_gen.pdf')
+    fig.savefig(chkpt_dir + x[0:3] + '_timeper.pdf')
     plt.close(fig)
+
+    fig = plt.figure()
+    pltVar, = plt.plot(pstats['generations'], pstats['sigma'], label='sigma')
+    plt.ylabel('Sigma')
+    plt.xlabel('Generations')
+    plt.legend(handles=[pltVar])
+    fig.savefig(chkpt_dir + x[0:3] + '_sigma.pdf')
+    plt.close(fig)
+
+    fig = plt.figure()
+    pltVar, = plt.plot(pstats['generations'], pstats['lr'], label='lr')
+    plt.ylabel('Learning rate')
+    plt.xlabel('Generations')
+    plt.legend(handles=[pltVar])
+    fig.savefig(chkpt_dir + x[0:3] + '_lr.pdf')
+    plt.close(fig)
+
+    fig = plt.figure()
+    pltVar, = plt.plot(pstats['generations'], pstats['walltimes'], label='lr')
+    plt.ylabel('Walltime')
+    plt.xlabel('Generations')
+    plt.legend(handles=[pltVar])
+    fig.savefig(chkpt_dir + x[0:3] + '_time.pdf')
+    plt.close(fig)
+
+
