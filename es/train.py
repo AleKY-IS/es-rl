@@ -18,14 +18,11 @@ from torch.autograd import Variable
 from .utils import get_lr, plot_stats, save_checkpoint, print_init, print_iter
 
 
-def unperturbed_rank(returns, unperturbed_results):
+def unperturbed_rank(returns, unperturbed_return):
     """
     Returns the rank of the unperturbed model among the pertubations.
     """
-    nth_place = 1
-    for r in returns:
-        if r > unperturbed_results:
-            nth_place += 1
+    nth_place = (returns > unperturbed_return).sum() + 1
     rank_diag = '{:d} out of {:d}'.format(nth_place, len(returns) + 1)
     return rank_diag, nth_place
 
@@ -296,9 +293,6 @@ def train_loop(args, parent_model, env, eval_fun, optimizer, lr_scheduler, chkpt
         stats['lr'].append(get_lr(optimizer))
         compute_gradients(args, parent_model, returns, seeds, is_anti_list)
         optimizer.step()
-        if (returns < 0).all():
-            returns = -returns
-            unperturbed_out['return'] = -unperturbed_out['return']
         if type(lr_scheduler) == torch.optim.lr_scheduler.ReduceLROnPlateau:
             #lr_scheduler.step(unperturbed_out['return'])
             # TODO Check that this steps correctly (it steps every patience times and what if returns are negative)
