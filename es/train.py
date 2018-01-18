@@ -134,8 +134,6 @@ def compute_sensitivities(parent_model, inputs):
             sensitivities[pid][sensitivities[pid] < 1e-5] = 1
             # Clip sensitivities at a large constant value
             sensitivities[pid][sensitivities[pid] > 1e5] = 1e5
-            # Set any sensitivities of zero to one to avoid dividing by zero
-            # param.grad.data[param.grad.data == 0] = 1
 
     # Set gradients
     parent_model.zero_grad()
@@ -148,7 +146,9 @@ def compute_sensitivities(parent_model, inputs):
 
 def compute_gradients(args, parent_model, returns, random_seeds, is_anti_list):
     """
-    Computes the gradients of the weights of the model in order to improve the model return.
+    Computes the gradients of the weights of the model wrt. to the return. 
+    The gradients will point in the direction of change in the weights resulting in a 
+    decrease in the return.
     """
     # Verify input
     batch_size = len(returns)
@@ -174,7 +174,8 @@ def compute_gradients(args, parent_model, returns, random_seeds, is_anti_list):
             eps = torch.from_numpy(np.random.normal(0, 1, param.data.size())).float()
             eps = eps/param.grad.data   # Scale by sensitivities
             eps = eps/eps.std()         # Rescale to zero mean unit 
-            gradients[layer] += 1/(args.agents*args.sigma) * (reward*multiplier*eps)
+            gradients[layer] += 1/(args.agents*args.sigma) * (reward*multiplier*eps) 
+            #sigma_gradient += 
 
     # Set gradients
     parent_model.zero_grad()
@@ -190,16 +191,24 @@ def compute_gradients(args, parent_model, returns, random_seeds, is_anti_list):
 #       -   for j in range(int(args.agents/2)):
 #       -       inputs.append((args, perturbed_model, seed, return_queue, env, is_negative))
 #       -   p.imap_unordered(eval_fun, args=inputs) 
-def train_loop(args, parent_model, env, eval_fun, optimizer, lr_scheduler, chkpt_dir, stats=None):
-    # Initialize dict for saving statistics
+def train_loop(args, parent_model, env, eval_fun, optimizer, lr_scheduler, chkpt_dir, stats=None, checkpoint_interval=10):
+    # Initialize iteration variables and statistics
     if stats is None:
+        # Initialize dict for saving statistics
         stat_names = ['generations', 'episodes', 'observations', 'walltimes',
                       'reward_avg', 'reward_var', 'reward_max', 'reward_min',
-                      'reward_unp', 'unp_rank', 'sigma', 'lr']
+                      'reward_unp', 'unp_rank', 'sigma', 'lr', 'start_time']
         stats = {}
         for n in stat_names:
             stats[n] = []
+        start_generation = 0
+        stats['start_time'] = time.time()
         print_init(args, parent_model, optimizer, lr_scheduler)
+    else:
+        # Retrieve info on last iteration
+        n_episodes = stats['episodes'][-1]
+        n_observations = stats['observations'][-1]
+        start_generation = stats['generations'][-1] + 1
     
     # Initialize return queue for multiprocessing
     return_queue = mp.Queue()
@@ -211,14 +220,9 @@ def train_loop(args, parent_model, env, eval_fun, optimizer, lr_scheduler, chkpt
     eval_fun(args, parent_model, 'dummy_seed', return_queue, env, 'dummy_neg', collect_inputs=True)
     unperturbed_out = return_queue.get()
     max_unperturbed_return = -1e8
-    
     # Start training loop
-    n_episodes = 0
-    n_generation = 0
-    n_observations = 0
     last_checkpoint_time = time.time()
-    start_time = time.time()
-    for n_generation in range(args.max_generations):
+    for n_generation in range(start_generation, args.max_generations):
         # Empty list of processes, seeds and models and return queue
         loop_start_time = time.time()
         processes, seeds, models = [], [], []
@@ -252,7 +256,8 @@ def train_loop(args, parent_model, env, eval_fun, optimizer, lr_scheduler, chkpt
             is_negative = not is_negative
         assert len(seeds) == 0
         # Evaluate the unperturbed model as well
-        p = mp.Process(target=eval_fun, args=(args, parent_model, 'dummy_seed', return_queue, env, 'dummy_neg'), kwargs={'collect_inputs': True})
+        inputs = (args, parent_model, 'dummy_seed', return_queue, env, 'dummy_neg')
+        p = mp.Process(target=eval_fun, args=inputs, kwargs={'collect_inputs': True})
         p.start()
         processes.append(p)
         # Get output from processes until all are terminated
@@ -292,7 +297,6 @@ def train_loop(args, parent_model, env, eval_fun, optimizer, lr_scheduler, chkpt
         if (returns < 0).all():
             returns = -returns
             unperturbed_out['return'] = -unperturbed_out['return']
-        # IPython.embed()
         if type(lr_scheduler) == torch.optim.lr_scheduler.ReduceLROnPlateau:
             #lr_scheduler.step(unperturbed_out['return'])
             # TODO Check that this steps correctly (it steps every patience times and what if returns are negative)
@@ -317,25 +321,22 @@ def train_loop(args, parent_model, env, eval_fun, optimizer, lr_scheduler, chkpt
         stats['generations'].append(n_generation)
         stats['episodes'].append(n_episodes)
         stats['observations'].append(n_observations)
-        stats['walltimes'].append(time.time() - start_time)
+        stats['walltimes'].append(time.time() - stats['start_time'])
         stats['reward_avg'].append(returns.mean())
         stats['reward_var'].append(returns.var())
         stats['reward_max'].append(returns.max())
         stats['reward_min'].append(returns.min())
         stats['reward_unp'].append(unperturbed_out['return'])
         stats['unp_rank'].append(rank)
-        stats['sigma'].append(np.exp(beta))
+        stats['sigma'].append(np.exp(0.5*beta))
         
         # Adjust max length of episodes
         if hasattr(args, 'not_var_ep_len') and not args.not_var_ep_len:
             args.batch_size = int(5*max(i_observations))
 
-        # Plot
-        if last_checkpoint_time < time.time() - 10:
+        # Save checkpoint every `checkpoint_interval` seconds
+        if last_checkpoint_time < time.time() - checkpoint_interval:
             plot_stats(stats, chkpt_dir)
-
-        # Save checkpoint (every 5 minutes)
-        if last_checkpoint_time < time.time() - 10:
             save_checkpoint(parent_model, optimizer, best_model_stdct, best_optimizer_stdct, stats, chkpt_dir)
             last_checkpoint_time = time.time()
 
