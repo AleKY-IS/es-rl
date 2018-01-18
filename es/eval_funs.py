@@ -115,9 +115,9 @@ def supervised_eval(args, model, random_seed, return_queue, train_loader, is_ant
     (data, target) = next(iter(train_loader))
     data, target = Variable(data), Variable(target)
     output = model(data)
-    reward = - F.nll_loss(output, target)
-    reward = reward.data.numpy()[0]
-    out = {'seed': random_seed, 'return': reward, 'is_anti': is_antithetic, 'n_observations': args.batch_size}
+    retrn = - F.nll_loss(output, target)
+    retrn = retrn.data.numpy()[0]
+    out = {'seed': random_seed, 'return': retrn, 'is_anti': is_antithetic, 'n_observations': args.batch_size}
     if collect_inputs:
         # NOTE It is necessary to convert the torch.autograd.Variable to numpy array 
         # in order to correctly transfer this data from the worker thread to the main thread.

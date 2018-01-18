@@ -166,15 +166,15 @@ def compute_gradients(args, parent_model, returns, random_seeds, is_anti_list):
     # Compute gradients
     # - ES strategy
     for i in range(args.agents):
-        # Set random seed, get antithetic multiplier and reward
+        # Set random seed, get antithetic multiplier and return
         np.random.seed(random_seeds[i])
         multiplier = -1 if is_anti_list[i] else 1
-        reward = shaped_returns[i]
+        retrn = shaped_returns[i]
         for layer, param in enumerate(parent_model.parameters()):
             eps = torch.from_numpy(np.random.normal(0, 1, param.data.size())).float()
             eps = eps/param.grad.data   # Scale by sensitivities
             eps = eps/eps.std()         # Rescale to zero mean unit 
-            gradients[layer] += 1/(args.agents*args.sigma) * (reward*multiplier*eps) 
+            gradients[layer] += 1/(args.agents*args.sigma) * (retrn*multiplier*eps) 
             #sigma_gradient += 
 
     # Set gradients
@@ -196,11 +196,13 @@ def train_loop(args, parent_model, env, eval_fun, optimizer, lr_scheduler, chkpt
     if stats is None:
         # Initialize dict for saving statistics
         stat_names = ['generations', 'episodes', 'observations', 'walltimes',
-                      'reward_avg', 'reward_var', 'reward_max', 'reward_min',
-                      'reward_unp', 'unp_rank', 'sigma', 'lr', 'start_time']
+                      'return_avg', 'return_var', 'return_max', 'return_min',
+                      'return_unp', 'unp_rank', 'sigma', 'lr', 'start_time']
         stats = {}
         for n in stat_names:
             stats[n] = []
+            n_episodes = 0
+            n_observations = 0
         start_generation = 0
         stats['start_time'] = time.time()
         print_init(args, parent_model, optimizer, lr_scheduler)
@@ -322,11 +324,11 @@ def train_loop(args, parent_model, env, eval_fun, optimizer, lr_scheduler, chkpt
         stats['episodes'].append(n_episodes)
         stats['observations'].append(n_observations)
         stats['walltimes'].append(time.time() - stats['start_time'])
-        stats['reward_avg'].append(returns.mean())
-        stats['reward_var'].append(returns.var())
-        stats['reward_max'].append(returns.max())
-        stats['reward_min'].append(returns.min())
-        stats['reward_unp'].append(unperturbed_out['return'])
+        stats['return_avg'].append(returns.mean())
+        stats['return_var'].append(returns.var())
+        stats['return_max'].append(returns.max())
+        stats['return_min'].append(returns.min())
+        stats['return_unp'].append(unperturbed_out['return'])
         stats['unp_rank'].append(rank)
         stats['sigma'].append(np.exp(0.5*beta))
         
