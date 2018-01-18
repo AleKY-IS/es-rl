@@ -1,3 +1,5 @@
+import numpy as np
+import scipy.stats as st
 import torch
 import torch.nn.functional as F
 from torch.autograd import Variable
@@ -43,7 +45,7 @@ def gym_rollout(args, model, random_seed, return_queue, env, is_antithetic, coll
     return_queue.put(out)
 
 
-def gym_render(args, model, env):
+def gym_render(model, env, max_episode_length):
     """
     Renders the learned model on the environment for testing.
     """
@@ -56,7 +58,7 @@ def gym_render(args, model, env):
             this_model_num_steps = 0
             done = False
             # Rollout
-            while not done and this_model_num_steps < args.batch_size:
+            while not done and this_model_num_steps < max_episode_length:
                 # Choose action
                 actions = model(state)
                 action = actions.max(1)[1].data.numpy()
@@ -70,6 +72,37 @@ def gym_render(args, model, env):
             print('Reward: %f' % this_model_return)
     except KeyboardInterrupt:
         print("\nEnded test session by keyboard interrupt")
+
+
+def gym_test(model, env, max_episode_length, n_episodes=1000):
+    """
+    Tests the learned model on the environment.
+    """
+    returns = [0]*n_episodes
+    for i_episode in range(n_episodes):
+        # Reset environment
+        state = env.reset()
+        state = Variable(torch.from_numpy(state).float(), volatile=True).unsqueeze(0)
+        this_model_num_steps = 0
+        done = False
+        # Rollout
+        while not done and this_model_num_steps < max_episode_length:
+            # Choose action
+            actions = model(state)
+            action = actions.max(1)[1].data.numpy()
+            # Step
+            state, reward, done, _ = env.step(action[0])
+            returns[i_episode] += reward
+            this_model_num_steps += 1
+            # Cast state
+            state = Variable(torch.from_numpy(state).float(), volatile=True).unsqueeze(0)
+    
+    mean = np.mean(returns)  # Mean return
+    sem = st.sem(returns)    # Standard error of mean
+    for conf in [0.9, 0.95, 0.975, 0.99]:
+        interval = st.norm.interval(conf, loc=mean, scale=sem)
+        half_width = (interval[1] - interval[0])/2
+        print("{:2d}% CI = {:5.2f} +/- {:<5.2f},  [{:>5.2f}, {:<5.2f}]".format(int(conf*100), mean, half_width, interval[0], interval[1]))
 
 
 def supervised_eval(args, model, random_seed, return_queue, train_loader, is_antithetic, collect_inputs=False):
@@ -128,13 +161,4 @@ def supervised_test(args, model, test_loader):
         test_loss, correct, len(test_loader.dataset),
         100. * correct / len(test_loader.dataset)))
     print(confusion_matrix(targets, predictions))
-
-
-    # (2) #I have 2 classes here
-    # for ii, data in enumerate(val_dataloader):
-    #     input, label = data
-    #     val_input = Variable(input, volatile=True).cuda()
-    #     val_label = Variable(label.type(t.LongTensor), volatile=True).cuda()
-    #     score = model(val_input)
-    #     confusion_matrix.add(score.data.squeeze(), label.type(t.LongTensor))
-    # print confusion_matrix.conf
+    
