@@ -38,6 +38,7 @@ if __name__ == '__main__':
     parser.add_argument('--patience', type=int, default=50, help='patience before lowering learning rate [ReduceLROnPlateau]')
     parser.add_argument('--threshold', type=float, default=1e-4, help='threshold for comparing best to current [ReduceLROnPlateau]')
     parser.add_argument('--cooldown', type=int, default=25, help='cooldown after lowering learning rate before able to do it again [ReduceLROnPlateau]')
+    parser.add_argument('--mode', type=str, default='max', help='the optimization mode (minimization or maximization) [ReduceLROnPlateau]')
     parser.add_argument('--min-lr', type=float, default=1e-6, help='minimal learning rate [ReduceLROnPlateau]')
     parser.add_argument('--milestones', type=list, default=50, help='milestones on which to lower learning rate[MultiStepLR]')
     parser.add_argument('--step-size', type=int, default=50, help='step interval on which to lower learning rate[StepLR]')
