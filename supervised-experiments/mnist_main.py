@@ -27,7 +27,7 @@ if __name__ == '__main__':
     parser.add_argument('--model', type=str, default='FFN', choices=['DQN', 'FFN', 'Mujoco', 'ES'], metavar='MOD', help='model name')
 
     parser.add_argument('--optimizer', type=str, default='SGD', help='optimizer to use')
-    parser.add_argument('--lr', type=float, default=0.1, metavar='LR', help='optimizer learning rate')
+    parser.add_argument('--lr', type=float, default=0.02, metavar='LR', help='optimizer learning rate')
     parser.add_argument('--momentum', type=float, default=0.9, help='optimizer momentum')
     parser.add_argument('--nesterov', action='store_true', help='boolean to denote if optimizer momentum is Nesterov')
     parser.add_argument('--weight-decay', type=float, default=0.001, help='optimizer L2 norm weight decay penalty')
@@ -44,7 +44,7 @@ if __name__ == '__main__':
 
     parser.add_argument('--agents', type=int, default=40, metavar='N', help='number of children, must be even')
     parser.add_argument('--sigma', type=float, default=0.05, metavar='SD', help='initial noise standard deviation')
-    parser.add_argument('--batch-size', type=int, default=100, metavar='BS', help='batch size agent evaluation (max episode steps for RL setting rollouts)')
+    parser.add_argument('--batch-size', type=int, default=200, metavar='BS', help='batch size agent evaluation (max episode steps for RL setting rollouts)')
     parser.add_argument('--max-generations', type=int, default=100000, metavar='MG', help='maximum number of generations')
 
     parser.add_argument('--frame-size', type=int, default=84, metavar='FS', help='square size of frames in pixels')
@@ -93,22 +93,7 @@ if __name__ == '__main__':
     stats = None
     if args.restore:
         file_path = os.path.split(os.path.realpath(__file__))[0]
-        chkpt_dir = file_path+'/'+'/'.join([i for i in args.restore.split('/') if i not in file_path.split('/')])
-        try:
-            if args.test:
-                model_state_dict = torch.load(os.path.join(chkpt_dir, 'best_model_state_dict.pth'))
-                optimizer_state_dict = torch.load(os.path.join(chkpt_dir, 'best_optimizer_state_dict.pth'))
-            else:
-                model_state_dict = torch.load(os.path.join(chkpt_dir, 'model_state_dict.pth'))
-                optimizer_state_dict = torch.load(os.path.join(chkpt_dir, 'optimizer_state_dict.pth'))
-            with open(os.path.join(chkpt_dir, 'stats.pkl'), 'rb') as filename:
-                stats = pickle.load(filename)
-        except Exception:
-            print("Checkpoint restore failed")
-            raise Exception
-        lr_scheduler.last_epoch = stats['generations'][-1]
-        model.load_state_dict(model_state_dict)
-        optimizer.load_state_dict(optimizer_state_dict)
+        model, optimizer, lr_scheduler, stats = load_checkpoint(args.restore, file_path, model, optimizer, lr_scheduler, args.test)
 
     # Training and test data loaders
     kwargs = {'num_workers': 1, 'pin_memory': True} if args.cuda else {}
@@ -130,4 +115,8 @@ if __name__ == '__main__':
     if args.test:
         supervised_test(args, model, test_loader)
     else:
-        train_loop(args, model, train_loader, supervised_eval, optimizer, lr_scheduler, chkpt_dir, stats=stats)
+        try:
+            train_loop(args, model, train_loader, supervised_eval, optimizer, lr_scheduler, chkpt_dir, stats=stats)
+        except KeyboardInterrupt:
+            print("Training stopped by user.")
+        supervised_test(args, model, test_loader)
