@@ -12,8 +12,9 @@ import torch.multiprocessing as mp
 import torch.nn.functional as F
 import torch.optim as optim
 from context import es
+from es.utils import load_checkpoint
 from es.envs import create_atari_env
-from es.eval_funs import gym_render, gym_rollout
+from es.eval_funs import gym_render, gym_rollout, gym_test
 from es.models import DQN, FFN
 from es.train import train_loop
 from torch.autograd import Variable
@@ -32,9 +33,9 @@ if __name__ == '__main__':
     parser.add_argument('--weight-decay', type=float, default=0.001, help='optimizer L2 norm weight decay penalty')
 
     parser.add_argument('--lr-scheduler', type=str, default='ReduceLROnPlateau', help='learning rate scheduler')
-    parser.add_argument('--gamma', type=float, default=0.99, help='learning rate decay rate')
+    parser.add_argument('--gamma', type=float, default=0.999, help='learning rate decay rate')
     parser.add_argument('--factor', type=float, default=0.8, help='reduction factor [ReduceLROnPlateau]')
-    parser.add_argument('--patience', type=int, default=50, help='patience before lowering learning rate [ReduceLROnPlateau]')
+    parser.add_argument('--patience', type=int, default=150, help='patience before lowering learning rate [ReduceLROnPlateau]')
     parser.add_argument('--threshold', type=float, default=1e-4, help='threshold for comparing best to current [ReduceLROnPlateau]')
     parser.add_argument('--cooldown', type=int, default=25, help='cooldown after lowering learning rate before able to do it again [ReduceLROnPlateau]')
     parser.add_argument('--min-lr', type=float, default=1e-6, help='minimal learning rate [ReduceLROnPlateau]')
@@ -42,7 +43,7 @@ if __name__ == '__main__':
     parser.add_argument('--step-size', type=int, default=50, help='step interval on which to lower learning rate[StepLR]')
 
     parser.add_argument('--agents', type=int, default=40, metavar='N', help='number of children, must be even')
-    parser.add_argument('--sigma', type=float, default=0.05, metavar='SD', help='initial noise standard deviation')
+    parser.add_argument('--sigma', type=float, default=0.5, metavar='SD', help='initial noise standard deviation')
     parser.add_argument('--batch-size', type=int, default=10000, metavar='BS', help='batch size agent evaluation (max episode steps for RL setting rollouts)')
     parser.add_argument('--max-generations', type=int, default=100000, metavar='MG', help='maximum number of generations')
     parser.add_argument('--not-var-ep-len', action='store_true', help='maximum number of generations')
@@ -100,28 +101,15 @@ if __name__ == '__main__':
     stats = None
     if args.restore:
         file_path = os.path.split(os.path.realpath(__file__))[0]
-        chkpt_dir = file_path+'/'+'/'.join([i for i in args.restore.split('/') if i not in file_path.split('/')])
-        if args.test:
-            model_state_dict = torch.load(os.path.join(chkpt_dir, 'best_model_state_dict.pth'))
-            optimizer_state_dict = torch.load(os.path.join(chkpt_dir, 'best_optimizer_state_dict.pth'))
-        else:
-            model_state_dict = torch.load(os.path.join(chkpt_dir, 'model_state_dict.pth'))
-            optimizer_state_dict = torch.load(os.path.join(chkpt_dir, 'optimizer_state_dict.pth'))
-            with open(os.path.join(chkpt_dir, 'stats.pkl'), 'rb') as filename:
-                stats = pickle.load(filename)
-        try:
-            lr_scheduler.last_epoch = stats['generations'][-1]
-            model.load_state_dict(model_state_dict)
-            optimizer.load_state_dict(optimizer_state_dict)
-        except Exception:
-            print("Checkpoint restore failed")
-            raise Exception
+        chkpt_dir, model, optimizer, lr_scheduler, stats = load_checkpoint(args.restore, file_path, model, optimizer, lr_scheduler, args.test)
 
     # Run test or train
     if args.test:
-        gym_render(args, model, env)
+        gym_test(model, env, args.batch_size)
+        gym_render(model, env, args.batch_size)
     else:
         try:
             train_loop(args, model, env, gym_rollout, optimizer, lr_scheduler, chkpt_dir, stats=stats)
         except KeyboardInterrupt:
             print("Program stopped by keyboard interruption")
+        gym_test(model, env, args.batch_size)
