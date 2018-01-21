@@ -21,14 +21,16 @@ def print_init(args, model, optimizer, lr_scheduler):
     print("Generations:          {:d}".format(args.max_generations))
     print("Sigma:                {:5.4f}".format(args.sigma))
     print("Learning rate:        {:5.4f}".format(args.lr))
-    print("Restore point:        {:s}".format(args.restore))
+    print("Batch size            {:5d}".format(args.batch_size))
+    print("Using CUDA            {:s}".format(str(args.cuda)))
+    print("Optimizing sigma      {:s}".format(str(args.optimize_sigma)))
     print("\n=================== Model ===================")
     print(model)
     print("\n================= Optimizer =================")
+    print(type(optimizer))
     pprint.pprint(optimizer.state_dict()['param_groups'])
     print("\n================ LR scheduler ===============")
     print(lr_scheduler)
-    print()
     print("\n================== Running ==================")
 
 
@@ -37,12 +39,13 @@ def print_iter(args, stats, workers_start_time, workers_end_time, loop_start_tim
     Print information on a generation
     """
     print()
+    lr = stats['lr'][-1] if type(stats['lr'][-1]) is not list else stats['lr'][-1][0]
     try:
         s = "Gen {:5d} | Obs {:9d} | F {:6.2f} | Avg {:6.2f} | Max {:6.2f} | Min {:6.2f} | Var {:7.2f} | Rank {:3d} | Sig {:5.4f} | LR {:5.4f}".format(
-        stats['generations'][-1], stats['observations'][-1], stats['return_unp'][-1], stats['return_avg'][-1], stats['return_max'][-1], stats['return_min'][-1], stats['return_var'][-1], stats['unp_rank'][-1], stats['sigma'][-1], stats['lr'][-1])
+        stats['generations'][-1], stats['observations'][-1], stats['return_unp'][-1], stats['return_avg'][-1], stats['return_max'][-1], stats['return_min'][-1], stats['return_var'][-1], stats['unp_rank'][-1], stats['sigma'][-1], lr)
         print(s, end="")
     except Exception:
-        print('Some number too large', end="")
+        print('In print_iter: Some number too large', end="")
 
 
 def get_inputs_from_args(method, args):
@@ -163,8 +166,13 @@ def plot_stats(stats, chkpt_dir):
         for k in ['return_unp', 'return_avg', 'return_min', 'return_max']:
             pstats[k] = [-s for s in pstats[k]]
     
-    # NOTE: Possible x-axis are: generations, episodes, observations, walltimes
+    # Only consider the first parameter group of the optimizer
+    n_groups = 1 if type(pstats['lr'][0]) is float else len(pstats['lr'][0])
+    if n_groups > 1:
+        for key in ['lr']:
+            pstats[key] = [vals_group[0] for vals_group in pstats[key]]
 
+    # NOTE: Possible x-axis are: generations, episodes, observations, walltimes
 
     fig = plt.figure()
     pltUnp, = plt.plot(pstats[x], moving_average(pstats['return_unp']), label='parent ma')
@@ -179,7 +187,7 @@ def plot_stats(stats, chkpt_dir):
     plt.ylabel('Return')
     plt.xlabel(x.capitalize())
     plt.legend(handles=[pltUnp, pltAvg, pltMax, pltMin, pltUnpBack, pltAvgBack, pltMaxBack, pltMinBack])
-    fig.savefig(chkpt_dir + x[0:3] + '_rew' + '.pdf')
+    fig.savefig(os.path.join(chkpt_dir, x[0:3] + '_rew' + '.pdf'))
     plt.close(fig)
 
     fig = plt.figure()
@@ -189,7 +197,7 @@ def plot_stats(stats, chkpt_dir):
     plt.ylabel('Return')
     plt.xlabel(x.capitalize())
     plt.legend(handles=[pltUnpS, pltUnp])
-    fig.savefig(chkpt_dir + x[0:3] + '_rew_par' + '.pdf')
+    fig.savefig(os.path.join(chkpt_dir, x[0:3] + '_rew_par' + '.pdf'))
     plt.close(fig)
 
     fig = plt.figure()
@@ -199,7 +207,7 @@ def plot_stats(stats, chkpt_dir):
     plt.ylabel('Return variance')
     plt.xlabel('Generations')
     plt.legend(handles=[pltVarS, pltVar])
-    fig.savefig(chkpt_dir + x[0:3] + '_rew_var.pdf')
+    fig.savefig(os.path.join(chkpt_dir, x[0:3] + '_rew_var.pdf'))
     plt.close(fig)
 
     fig = plt.figure()
@@ -209,7 +217,7 @@ def plot_stats(stats, chkpt_dir):
     plt.ylabel('Unperturbed rank')
     plt.xlabel('Generations')
     plt.legend(handles=[pltRankS, pltRank])
-    fig.savefig(chkpt_dir + x[0:3] + '_unprank.pdf')
+    fig.savefig(os.path.join(chkpt_dir, x[0:3] + '_unprank.pdf'))
     plt.close(fig)
 
     fig = plt.figure()
@@ -219,7 +227,7 @@ def plot_stats(stats, chkpt_dir):
     plt.ylabel('Walltime per generation')
     plt.xlabel('Generations')
     plt.legend(handles=[pltVar])
-    fig.savefig(chkpt_dir + x[0:3] + '_timeper.pdf')
+    fig.savefig(os.path.join(chkpt_dir, x[0:3] + '_timeper.pdf'))
     plt.close(fig)
 
     fig = plt.figure()
@@ -227,7 +235,7 @@ def plot_stats(stats, chkpt_dir):
     plt.ylabel('Sigma')
     plt.xlabel('Generations')
     plt.legend(handles=[pltVar])
-    fig.savefig(chkpt_dir + x[0:3] + '_sigma.pdf')
+    fig.savefig(os.path.join(chkpt_dir, x[0:3] + '_sigma.pdf'))
     plt.close(fig)
 
     fig = plt.figure()
@@ -235,15 +243,15 @@ def plot_stats(stats, chkpt_dir):
     plt.ylabel('Learning rate')
     plt.xlabel('Generations')
     plt.legend(handles=[pltVar])
-    fig.savefig(chkpt_dir + x[0:3] + '_lr.pdf')
+    fig.savefig(os.path.join(chkpt_dir, x[0:3] + '_lr.pdf'))
     plt.close(fig)
 
     fig = plt.figure()
-    pltVar, = plt.plot(pstats['generations'], pstats['walltimes'], label='lr')
+    pltVar, = plt.plot(pstats['generations'], pstats['walltimes'], label='walltime')
     plt.ylabel('Walltime')
     plt.xlabel('Generations')
     plt.legend(handles=[pltVar])
-    fig.savefig(chkpt_dir + x[0:3] + '_time.pdf')
+    fig.savefig(os.path.join(chkpt_dir, x[0:3] + '_time.pdf'))
     plt.close(fig)
 
 
