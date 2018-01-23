@@ -30,6 +30,13 @@ Anaconda can be installed on the HPC. Get the latest 64 bit x86 version from <ht
 My personal root directory is `/zhome/c2/b/86488/`
 
 ## Executing jobs on HPC
+### Connecting
+A connection to the HPC can be established by SSH by 
+```ssh s132315@login3.hpc.dtu.dk```
+
+A local mirror of the user folder on the HPC can be created by `sshfs` 
+```sshfs s132315@login.hpc.dtu.dk:/zhome/c2/b/86488 ~/mnt -o defer_permissions -o volname=hpc```
+
 ### Submitting
 A single job can be run (not submitted) by executing the `run_hpc.sh` script. 
 
