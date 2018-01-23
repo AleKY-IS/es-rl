@@ -4,6 +4,8 @@ import pickle
 import pprint
 
 import IPython
+import matplotlib as mpl
+mpl.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -15,23 +17,27 @@ def print_init(args, model, optimizer, lr_scheduler):
     """
     Print the initial message when training is started
     """
-    print("================= Evolver ==================")
-    print("Environment:          {:s}".format(args.env_name))
-    print("Workers:              {:d}".format(args.agents))
-    print("Generations:          {:d}".format(args.max_generations))
-    print("Sigma:                {:5.4f}".format(args.sigma))
-    print("Learning rate:        {:5.4f}".format(args.lr))
-    print("Batch size            {:5d}".format(args.batch_size))
-    print("Using CUDA            {:s}".format(str(args.cuda)))
-    print("Optimizing sigma      {:s}".format(str(args.optimize_sigma)))
-    print("\n=================== Model ===================")
-    print(model)
-    print("\n================= Optimizer =================")
-    print(type(optimizer))
-    pprint.pprint(optimizer.state_dict()['param_groups'])
-    print("\n================ LR scheduler ===============")
-    print(lr_scheduler)
-    print("\n================== Running ==================")
+    s = "================= Evolver ==================\n"
+    s += "Environment:          {:s}\n".format(args.env_name)
+    s += "Workers:              {:d}\n".format(args.agents)
+    s += "Generations:          {:d}\n".format(args.max_generations)
+    s += "Sigma:                {:5.4f}\n".format(args.sigma)
+    s += "Learning rate:        {:5.4f}\n".format(args.lr)
+    s += "Batch size            {:<5d}\n".format(args.batch_size)
+    s += "Optimizing sigma      {:s}\n".format(str(args.optimize_sigma))
+    s += "Safe mutation         {:s}\n".format(str(args.safe_mutation))
+    s += "Using CUDA            {:s}\n".format(str(args.cuda))
+    s += "\n=================== Model ===================\n"
+    s += pprint.pformat(model) + "\n"
+    s += "\n================= Optimizer =================\n"
+    s += str(type(optimizer)) + "\n"
+    s += pprint.pformat(optimizer.state_dict()['param_groups']) + "\n"
+    s += "\n================ LR scheduler ===============\n"
+    s += str(type(lr_scheduler)) + "\n"
+    s += "\n================== Running ==================\n"
+    with open(os.path.join(args.chkpt_dir, 'init.log'), 'w') as f:
+        f.write(s)
+    print(s)
 
 
 def print_iter(args, stats, workers_start_time, workers_end_time, loop_start_time):
@@ -92,12 +98,13 @@ def load_checkpoint(restore_dir, file_path, model, optimizer, lr_scheduler, load
             optimizer_state_dict = torch.load(os.path.join(chkpt_dir, 'optimizer_state_dict.pth'))
         with open(os.path.join(chkpt_dir, 'stats.pkl'), 'rb') as filename:
             stats = pickle.load(filename)
+        lr_scheduler.last_epoch = stats['generations'][-1]
+        model.load_state_dict(model_state_dict)
+        optimizer.load_state_dict(optimizer_state_dict)
     except Exception:
         print("Checkpoint restore failed")
         raise Exception
-    lr_scheduler.last_epoch = stats['generations'][-1]
-    model.load_state_dict(model_state_dict)
-    optimizer.load_state_dict(optimizer_state_dict)
+
     return chkpt_dir, model, optimizer, lr_scheduler, stats
 
 
@@ -111,8 +118,9 @@ def save_checkpoint(parent_model, optimizer, best_model_stdct, best_optimizer_st
     torch.save(optimizer.state_dict(), os.path.join(chkpt_dir, 'optimizer_state_dict.pth'))
     # torch.save(lr_scheduler.state_dict(), os.path.join(chkpt_dir, 'lr_scheduler_state_dict.pth'))
     # Save best model
-    torch.save(best_model_stdct, os.path.join(chkpt_dir, 'best_model_state_dict.pth'))
-    torch.save(best_optimizer_stdct, os.path.join(chkpt_dir, 'best_optimizer_state_dict.pth'))
+    if best_model_stdct is not None:
+        torch.save(best_model_stdct, os.path.join(chkpt_dir, 'best_model_state_dict.pth'))
+        torch.save(best_optimizer_stdct, os.path.join(chkpt_dir, 'best_optimizer_state_dict.pth'))
     # Currently, learning rate scheduler has no state_dict and cannot be saved. It can be restored
     # by setting lr_scheduler.last_epoch = last generation index.
     with open(os.path.join(chkpt_dir, 'stats.pkl'), 'wb') as filename:
