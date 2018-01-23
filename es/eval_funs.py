@@ -1,11 +1,13 @@
+import time
+
+import IPython
 import numpy as np
 import scipy.stats as st
+from sklearn.metrics import confusion_matrix
+
 import torch
 import torch.nn.functional as F
 from torch.autograd import Variable
-import time
-import IPython
-from sklearn.metrics import confusion_matrix
 
 
 def gym_rollout(args, model, random_seed, return_queue, env, is_antithetic, collect_inputs=False):
@@ -105,7 +107,7 @@ def gym_test(model, env, max_episode_length, n_episodes=1000):
         print("{:2d}% CI = {:5.2f} +/- {:<5.2f},  [{:>5.2f}, {:<5.2f}]".format(int(conf*100), mean, half_width, interval[0], interval[1]))
 
 
-def supervised_eval(args, model, random_seed, return_queue, train_loader, is_antithetic, collect_inputs=False):
+def supervised_eval(args, model, random_seed, return_queue, train_loader, is_antithetic, collect_inputs=False, do_cuda=False):
     """
     Function to evaluate the fitness of a supervised model.
 
@@ -114,8 +116,12 @@ def supervised_eval(args, model, random_seed, return_queue, train_loader, is_ant
     """
     (data, target) = next(iter(train_loader))
     data, target = Variable(data), Variable(target)
+    if do_cuda:
+        data, target = data.cuda(), target.cuda()
     output = model(data)
-    retrn = - F.nll_loss(output, target)
+    retrn = -F.nll_loss(output, target)
+    if do_cuda:
+        retrn = retrn.cpu()
     retrn = retrn.data.numpy()[0]
     out = {'seed': random_seed, 'return': retrn, 'is_anti': is_antithetic, 'n_observations': args.batch_size}
     if collect_inputs:
@@ -161,4 +167,3 @@ def supervised_test(args, model, test_loader):
         test_loss, correct, len(test_loader.dataset),
         100. * correct / len(test_loader.dataset)))
     print(confusion_matrix(targets, predictions))
-    
