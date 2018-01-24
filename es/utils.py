@@ -56,7 +56,12 @@ def print_iter(args, stats, workers_start_time, workers_end_time, loop_start_tim
 
 def get_inputs_from_args(method, args):
     """
-    Get dict of inputs from args that match class `__init__` method
+    Get a dictionary of the variables in the `NameSpace`, `args`, that match
+    the `kwargs` of the given `method`.
+
+    Useful for passing inputs from an `argparser` `NameSpace` to a method since
+    standard behaviour would pass also any unknown keys from `args` to the
+    `method`, resulting in error.
     """
     ins = inspect.getfullargspec(method)
     num_ins = len(ins.args)
@@ -129,7 +134,7 @@ def save_checkpoint(parent_model, optimizer, best_model_stdct, best_optimizer_st
 
 def moving_average(y, window=20, center=True):
     """
-    Compute a moving average with of `window` observations in `y`. If 'centered=True`, the 
+    Compute a moving average with of `window` observations in `y`. If `centered=True`, the 
     average is computed on `window/2` observations before and after the value of `y` in question. 
     If `centered=False`, the average is computed on the `window` previous observations.
     """
