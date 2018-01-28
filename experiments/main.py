@@ -14,28 +14,47 @@ import torch.optim as optim
 from torch.autograd import Variable
 
 from context import es
+from es.algorithms import NES, xNES
+from es.models import FFN, DQN, MujocoFFN, MNISTNet
 from es.eval_funs import gym_rollout, gym_test, gym_render, supervised_eval, supervised_test
-from es.models import *
+from es.envs import create_atari_env
+from es.utils import get_inputs_from_args
 from es.train import train_loop
-from es.utils import get_inputs_from_args, load_checkpoint
 from torchvision import datasets, transforms
 
 
+# TODO: Get these from modules
 supervised_datasets = ['MNIST', 'FashionMNIST']
-nets = ['MNISTNet', 'DQN', 'FFN', 'Mujoco', 'ES']
-algorithms = ['NES', 'xNES']
+# nets = ['MNISTNet', 'DQN', 'FFN', 'MujocoFFN', 'ES']
+# algorithms = ['NES', 'xNES']
 
 
 def parse_inputs():
     """
-    Method to parse inputs given through the terminal.
+    This method parses inputs given through the terminal using `argparse`.
+    
+    It assigns values to all parameters of the algorithms and their models,
+    environments, optimizers and learning rate schedulers. It also defines
+    behaviour related to the execution of the code through the flags
+    `test`, `restore`, `cuda` and `silent`.
+    
+    If a value is not specified, it defaults to the default value also defined here.
     """
     parser = argparse.ArgumentParser(description='Experiments')
+    # Algorithm
+    parser.add_argument('--algorithm', type=str, default='NES', metavar='ALG', help='model name in es.models')
+    parser.add_argument('--pertubations', type=int, default=40, metavar='N', help='number of perturbed models to make; must be even')
+    parser.add_argument('--sigma', type=float, default=0.05, metavar='SD', help='initial noise standard deviation')
+    parser.add_argument('--optimize-sigma', action='store_true', help='boolean to denote whether or not to optimize sigma')
+    #parser.add_argument('--safe-mutation', action='store_true', help='boolean to denote whether or not to use safe mutations')
+    parser.add_argument('--safe-mutation', type=str, default=None, choices=[None, 'ABS', 'SUM', 'SO'], help='string denoting the type of safe mutations to use')
+    parser.add_argument('--batch-size', type=int, default=200, metavar='BS', help='batch size agent evaluation (max episode steps for RL setting rollouts)')
+    parser.add_argument('--max-generations', type=int, default=7500, metavar='MG', help='maximum number of generations')
     # Environment
     parser.add_argument('--env-name', type=str, default='MNIST', metavar='ENV', help='environment')
     parser.add_argument('--frame-size', type=int, default=84, metavar='FS', help='square size of frames in pixels')
     # Model
-    parser.add_argument('--model', type=str, default='MNISTNet', choices=nets, metavar='MOD', help='model name in es.models')
+    parser.add_argument('--model', type=str, default='MNISTNet', metavar='MOD', help='model name in es.models')
     # Optimizer
     parser.add_argument('--optimizer', type=str, default='SGD', help='optimizer to use')
     parser.add_argument('--lr', type=float, default=0.001, metavar='LR', help='optimizer learning rate')
@@ -53,15 +72,8 @@ def parse_inputs():
     parser.add_argument('--min-lr', type=float, default=1e-6, help='minimal learning rate [ReduceLROnPlateau]')
     parser.add_argument('--milestones', type=list, default=50, help='milestones on which to lower learning rate[MultiStepLR]')
     parser.add_argument('--step-size', type=int, default=50, help='step interval on which to lower learning rate[StepLR]')
-    # Algorithm
-    parser.add_argument('--algorithm', type=str, default='NES', metavar='ALG', help='model name in es.models')
-    parser.add_argument('--agents', type=int, default=40, metavar='N', help='number of children, must be even')
-    parser.add_argument('--sigma', type=float, default=0.05, metavar='SD', help='initial noise standard deviation')
-    parser.add_argument('--optimize-sigma', action='store_true', help='boolean to denote whether or not to optimize sigma')
-    parser.add_argument('--safe-mutation', action='store_true', help='boolean to denote whether or not to use safe mutations')
-    parser.add_argument('--batch-size', type=int, default=200, metavar='BS', help='batch size agent evaluation (max episode steps for RL setting rollouts)')
-    parser.add_argument('--max-generations', type=int, default=7500, metavar='MG', help='maximum number of generations')
     # Execution
+    parser.add_argument('--chkpt-int', type=int, default=300, help='Interval in seconds for saving checkpoints')
     parser.add_argument('--test', action='store_true', help='Test the model (accuracy or env render), no training')
     parser.add_argument('--restore', default='', metavar='RES', help='checkpoint from which to restore')
     parser.add_argument('--cuda', action='store_true', default=False, help='enables CUDA training')
@@ -71,8 +83,11 @@ def parse_inputs():
 
 
 def validate_inputs(args):
+    """
+    This method validates the given inputs from `argparse.ArgumentParser.parse_args()`.
+    """
     # Input validation
-    assert args.agents % 2 == 0                                         # Even number of agents
+    assert args.pertubations % 2 == 0                                   # Even number of pertubations
     assert not args.test or (args.test and args.restore)                # Testing requires restoring a model
     assert not args.cuda or (args.cuda and torch.cuda.is_available())   # Can only use CUDA if avaiable
 
@@ -87,16 +102,12 @@ def validate_inputs(args):
         raise ValueError('The given environment name is unrecognized')
 
 
-def create_algorithma(args):
-    model_class = getattr(es.algorithms, args.algorithm)
-
-
 def create_model(args):
     # Create model
-    model_class = getattr(es.models, args.model)
+    ModelClass = getattr(es.models, args.model)
     # Supervised or RL
     if args.is_rl:
-        args.model = model_class(args.env.observation_space, args.env.action_space)
+        args.model = ModelClass(args.env.observation_space, args.env.action_space)
     elif args.is_supervised:
         if args.env_name == 'MNIST':
             args.model = MNISTNet()
@@ -110,12 +121,13 @@ def create_model(args):
 
 def create_optimizer(args):
     # Parameters to optimize are model parameters that require gradient and sigma if chosen
+    # IPython.embed()
     opt_pars = []
     opt_pars.append({'label': 'model_params', 'params': args.model.parameters()})
     if args.optimize_sigma:
         # Parameterize the variance to ensure sigma>0: sigma = 0.5*exp(beta)
         args.beta = Variable(torch.Tensor([np.log(2*args.sigma**2)]), requires_grad=True)
-        opt_pars.append({'label': 'beta', 'params': args.beta, 'lr': args.lr/10})
+        opt_pars.append({'label': 'beta', 'params': args.beta, 'lr': args.lr/10, 'weight_decay': 0})
     # Create optimizer
     OptimizerClass = getattr(optim, args.optimizer)
     optimizer_input_dict = es.utils.get_inputs_from_args(OptimizerClass.__init__, args)
@@ -130,20 +142,6 @@ def create_lr_scheduler(args):
     if SchedulerClass is optim.lr_scheduler.ReduceLROnPlateau:
         scheduler_input_dict['mode'] = 'max'
     args.lr_scheduler = SchedulerClass(**scheduler_input_dict)
-
-
-def get_checkpoint(args):
-    # Initialize args.stats
-    args.stats = None
-    if not args.restore:
-        # Create checkpoint directory if not restoring
-        timestamp = datetime.datetime.now().strftime("%y%m%d-%H%M%S.%f")
-        args.chkpt_dir = os.path.join(args.file_path, 'checkpoints', '{:s}-{:s}'.format(args.env_name, timestamp))
-        if not os.path.exists(args.chkpt_dir):
-            os.makedirs(args.chkpt_dir)
-    else:
-        # Load checkpoint if restoring
-        args.chkpt_dir, args.model, args.optimizer, args.lr_scheduler, args.stats = load_checkpoint(args.restore, args.file_path, args.model, args.optimizer, args.lr_scheduler, args.test)
 
 
 def create_environment(args):
@@ -185,6 +183,20 @@ def create_environment(args):
     assert hasattr(args, 'env')
 
 
+def create_algorithm(args):
+    AlgorithmClass = getattr(es.algorithms, args.algorithm)
+    algorithm_input_dict = es.utils.get_inputs_from_args(AlgorithmClass.__init__, args)
+    args.algorithm = AlgorithmClass(**algorithm_input_dict)
+
+
+def create_checkpoint(args):
+    # Create checkpoint directory if not restoring
+    timestamp = datetime.datetime.now().strftime("%y%m%d-%H%M%S.%f")
+    args.chkpt_dir = os.path.join(args.file_path, 'checkpoints', '{:s}-{:s}'.format(args.env_name, timestamp))
+    if not os.path.exists(args.chkpt_dir):
+        os.makedirs(args.chkpt_dir)
+
+
 def get_eval_funs(args):
     if args.is_rl:
         args.eval_fun = gym_rollout
@@ -201,32 +213,47 @@ if __name__ == '__main__':
     validate_inputs(args)
     args.file_path = os.path.split(os.path.realpath(__file__))[0]
     # Create environment, model, optimizer and learning rate scheduler
-    create_algorithm(args)
     create_environment(args)
     create_model(args)
     create_optimizer(args)
     create_lr_scheduler(args)
-    # Create checkpoint
-    get_checkpoint(args)
     # Get functions for evaluation and testing
     get_eval_funs(args)
+    # Create checkpoint
+    if not args.restore:
+        create_checkpoint(args)
+    # Create algorithm
+    create_algorithm(args)
+    if args.restore:
+        args.algorithm.load_checkpoint(args.restore, load_best=args.test)
     # Get input dictionary of args for algorithm
-    args_dict = vars(args)
-    input_dict = get_inputs_from_args(args.algorithm.__init__, args)
-
+    # args_dict = vars(args)
+    
     # Set number of OMP threads for CPU computations
     # NOTE: This is needed for my personal stationary Linux PC for partially unknown reasons
     if platform.system() == 'Linux':
         torch.set_num_threads(1)  
-    
-    # Train if not testing
+
+    # Execute
     if not args.test:
         try:
-            train_loop(args, args.model, args.env, supervised_eval, args.optimizer, args.lr_scheduler, stats=args.stats)
+            args.algorithm.train()
         except KeyboardInterrupt:
             print("Training stopped by user.")
-        # Remake the environment in test mode
-        args.test = True
-        create_environment(args)
-    # Test
-    supervised_test(args, args.model, args.test_loader)
+        finally:
+            args.test = True
+            create_environment(args)
+
+    # Try to load best, then latest, checkpoint and run test
+    try:
+        args.algorithm.load_checkpoint(args.chkpt_dir, load_best=True)
+    except FileNotFoundError as best_e:
+        print("Could not load best model after training: ", best_e)
+        try:
+            args.algorithm.load_checkpoint(args.chkpt_dir, load_best=False)
+        except FileNotFoundError as latest_e:
+            print("Could not load latest model after training: ", latest_e)
+        else:
+            args.test_fun(args.algorithm.model, args.env, cuda=args.cuda)
+    else:
+        args.test_fun(args.algorithm.model, args.env, cuda=args.cuda)

@@ -107,7 +107,7 @@ def gym_test(model, env, max_episode_length, n_episodes=1000):
         print("{:2d}% CI = {:5.2f} +/- {:<5.2f},  [{:>5.2f}, {:<5.2f}]".format(int(conf*100), mean, half_width, interval[0], interval[1]))
 
 
-def supervised_eval(args, model, random_seed, return_queue, train_loader, is_antithetic, collect_inputs=False, do_cuda=False):
+def supervised_eval(model, train_loader, return_queue, random_seed, is_antithetic, silent=False, collect_inputs=False, do_cuda=False):
     """
     Function to evaluate the fitness of a supervised model.
 
@@ -123,7 +123,7 @@ def supervised_eval(args, model, random_seed, return_queue, train_loader, is_ant
     if do_cuda:
         retrn = retrn.cpu()
     retrn = retrn.data.numpy()[0]
-    out = {'seed': random_seed, 'return': retrn, 'is_anti': is_antithetic, 'n_observations': args.batch_size}
+    out = {'seed': random_seed, 'return': retrn, 'is_anti': is_antithetic, 'n_observations': data.data.size()[0]}
     if collect_inputs:
         # NOTE It is necessary to convert the torch.autograd.Variable to numpy array 
         # in order to correctly transfer this data from the worker thread to the main thread.
@@ -135,14 +135,14 @@ def supervised_eval(args, model, random_seed, return_queue, train_loader, is_ant
         #   3. The background process sends the file descriptor via the unix socket.
         out['inputs'] = data.data.numpy()
         # Also print correct prediction ratio
-        if not args.silent:
+        if not silent:
             pred = output.data.max(1, keepdim=True)[1] # get the index of the max log-probability
             correct_ratio = pred.eq(target.data.view_as(pred)).sum()/target.data.size()[0]
             print(" | Acc {:4.2f}%".format(correct_ratio*100), end="")
     return_queue.put(out)
 
 
-def supervised_test(args, model, test_loader):
+def supervised_test(model, test_loader, cuda=False):
     """
     Function to test the performance of a supervised classification model
     """
@@ -152,7 +152,7 @@ def supervised_test(args, model, test_loader):
     predictions = []
     targets = []
     for data, target in test_loader:
-        if args.cuda:
+        if cuda:
             data, target = data.cuda(), target.cuda()
         data, target = Variable(data, volatile=True), Variable(target)
         output = model(data)
