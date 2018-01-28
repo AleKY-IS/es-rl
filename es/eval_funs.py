@@ -159,8 +159,8 @@ def supervised_test(model, test_loader, cuda=False):
         test_loss += F.nll_loss(output, target, size_average=False).data[0] # sum up batch loss
         pred = output.data.max(1, keepdim=True)[1] # get the index of the max log-probability
         correct += pred.eq(target.data.view_as(pred)).cpu().sum()
-        predictions.extend(pred.numpy().flatten())
-        targets.extend(target.data.numpy().flatten())
+        predictions.extend(pred.cpu().numpy().flatten())
+        targets.extend(target.cpu().data.numpy().flatten())
 
     test_loss /= len(test_loader.dataset)
     print('Average loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)\n'.format(

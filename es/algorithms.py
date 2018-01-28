@@ -127,7 +127,7 @@ class Algorithm(object):
             u[sorted_indices[k]] = np.max([0, np.log(n/2+1)-np.log(k+1)])
         return u/np.sum(u)-1/n
 
-    def get_pertubation(self, param):
+    def get_pertubation(self, param, cuda=False):
         """This method computes a pertubation of a given pytorch parameter.
         """
         # Sample standard normal distributed pertubation
@@ -140,22 +140,32 @@ class Algorithm(object):
         if self.safe_mutation is not None:
             eps = eps/param.grad.data   # Scale by sensitivities
             eps = eps/eps.std()         # Rescale to unit variance
+        if not cuda:
+            eps = eps.cpu()
         return eps
 
     def compute_sensitivities(self, inputs, do_normalize=True, do_numerical=True):
-        """
-        Computes the output-weight sensitivities of the model given a mini-batch
-        of inputs.
-        Currently implements the SM-G-ABS version of the sensitivities.
+        """Computes the output-weight sensitivities of the model.
+       
+        Currently implements the SM-G-ABS and SM-G-SUM safe mutations.
 
         Reference: Safe Mutations for Deep and Recurrent Neural Networks through Output Gradients [2017]
+        
+        Args:
+            inputs (np.array): Batch of inputs on which to backpropagate and estimate sensitivities
+            do_normalize (bool, optional): Defaults to True. Rescale all sensitivities to be between 0 and 1
+            do_numerical (bool, optional): Defaults to True. Make sure sensitivities are not numerically ill conditioned (close to zero)
+        
+        Raises:
+            NotImplementedError: For the SO safe mutation
+            ValueError: For an unrecognized safe mutation
         """
-        # Convert input to torch Variable
+        # Forward pass on input batch
         if type(inputs) is not Variable:
             inputs = Variable(torch.from_numpy(inputs))
-        # Forward pass on input batch
         if self.cuda:
             inputs = inputs.cuda()
+            self.model.cuda()
         outputs = self.model(inputs)
         batch_size = outputs.data.size()[0]
         n_outputs = outputs.data.size()[1]
@@ -165,16 +175,16 @@ class Algorithm(object):
             t = torch.zeros(batch_size, n_outputs)
 
         # Compute sensitivities using specified method
-        if self.safe_mutation == 'ABS':
+        if self.safe_mutation is None:
+            # Skip if not required but activate gradients in model first
+            outputs.backward(t)
+            return
+        elif self.safe_mutation == 'ABS':
             sensitivities = self._compute_sensitivities_abs(outputs, t)
         elif self.safe_mutation == 'SUM':
             sensitivities = self._compute_sensitivities_sum(outputs, t)
         elif self.safe_mutation == 'SO':
-            raise NotImplementedError
-        elif self.safe_mutation is None:
-            # Skip if not required but activate gradients in model first
-            outputs.backward(t)
-            return
+            raise NotImplementedError('The second order safe mutation (SM-SO) is not yet implemented')
         else:
             raise ValueError('The type ''{:s}'' of safe mutations is unrecognized'.format(self.safe_mutation))
 
@@ -276,9 +286,9 @@ class Algorithm(object):
         s += "Batch size            {:<5d}\n".format(self.batch_size)
         s += "Safe mutation         {:s}\n".format(safe_mutation)
         s += "Antithetic sampling   {:s}\n".format(str(not self.no_antithetic))
-        s += "Using CUDA            {:s}\n".format(str(self.cuda))
+        s += "CUDA                  {:s}\n".format(str(self.cuda))
         with open(os.path.join(self.chkpt_dir, 'init.log'), 'a') as f:
-            f.write(s)
+            f.write(s+"\n\n")
         if not self.silent:
             print(s, end='')
 
@@ -503,6 +513,10 @@ class NES(Algorithm):
         assert batch_size == self.pertubations
         assert len(random_seeds) == batch_size
 
+        # CUDA
+        if self.cuda:
+            self.model.cuda()
+
         # Preallocate list with gradients
         weight_gradients = []
         beta_gradient = 0
@@ -516,7 +530,7 @@ class NES(Algorithm):
             torch.manual_seed(random_seeds[i])
             torch.cuda.manual_seed(random_seeds[i])
             for layer, param in enumerate(self.model.parameters()):
-                eps = self.get_pertubation(param)
+                eps = self.get_pertubation(param, cuda=self.cuda)
                 weight_gradients[layer] += 1/(self.pertubations*self.sigma**2) * (retrn * sign * eps)
                 if self.optimize_sigma:
                     beta_gradient += 1/(self.pertubations * self.beta.exp()) * retrn * (eps.pow(2).sum() - 1)
@@ -566,8 +580,6 @@ class NES(Algorithm):
             return_queue = mp.Queue()
 
             # Compute parent model weight-output sensitivities
-            if self.cuda:
-                self.model.cuda()
             self.compute_sensitivities(unperturbed_out['inputs'])
             
             # Generate a list of perturbed models and their known random seeds
@@ -592,7 +604,7 @@ class NES(Algorithm):
                 processes.append(p)
             assert len(seeds) == 0
             # Evaluate the unperturbed model as well
-            inputs = (self.model, self.env, return_queue, 'dummy_seed')
+            inputs = (self.model.cpu(), self.env, return_queue, 'dummy_seed')
             p = mp.Process(target=self.eval_fun, args=inputs, kwargs={'collect_inputs': True})
             p.start()
             processes.append(p)
@@ -625,13 +637,10 @@ class NES(Algorithm):
             returns = np.array(returns)
             
             # Shaping, rank, compute gradients, update parameters and learning rate
-            if self.cuda:
-                self.model = self.model.cuda()
             rank = self.unperturbed_rank(returns, unperturbed_out['return'])
             shaped_returns = self.fitness_shaping(returns)
             self.compute_gradients(shaped_returns, seeds)
-            if self.cuda:
-                self.model = self.model.cpu()
+            self.model.cpu()
             self.optimizer.step()
             self.sigma = self.beta2sigma(self.beta)
             # if self.optimize_sigma:
