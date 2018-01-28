@@ -131,4 +131,4 @@ if __name__ == '__main__':
             train_loop(args, args.model, args.train_loader, supervised_eval, args.optimizer, args.lr_scheduler, stats=stats)
         except KeyboardInterrupt:
             print("Training stopped by user.")
-        supervised_test(args, args.model, args.test_loader)
+        supervised_test(args.model, args.test_loader, cuda=args.cuda)
