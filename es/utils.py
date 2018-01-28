@@ -13,20 +13,20 @@ import pandas as pd
 import torch
 
 
-def get_inputs_from_args(method, args):
+def get_inputs_from_dict(method, d):
     """
-    Get a dictionary of the variables in the `NameSpace`, `args`, that match
+    Get a dictionary of the variables in the `NameSpace`, `d`, that match
     the `kwargs` of the given `method`.
 
     Useful for passing inputs from an `argparser` `NameSpace` to a method since
-    standard behaviour would pass also any unknown keys from `args` to the
+    standard behaviour would pass also any unknown keys from `d` to the
     `method`, resulting in error.
     """
     ins = inspect.getfullargspec(method)
     input_dict = {}
     for in_id, a in enumerate(ins.args):
-        if hasattr(args, a):
-            input_dict[a] = getattr(args, a)
+        if a in d.keys():
+            input_dict[a] = d[a]
     return input_dict
 
 

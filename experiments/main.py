@@ -18,8 +18,7 @@ from es.algorithms import NES, xNES
 from es.models import FFN, DQN, MujocoFFN, MNISTNet
 from es.eval_funs import gym_rollout, gym_test, gym_render, supervised_eval, supervised_test
 from es.envs import create_atari_env
-from es.utils import get_inputs_from_args
-from es.train import train_loop
+from es.utils import get_inputs_from_dict
 from torchvision import datasets, transforms
 
 
@@ -46,6 +45,7 @@ def parse_inputs():
     parser.add_argument('--pertubations', type=int, default=40, metavar='N', help='number of perturbed models to make; must be even')
     parser.add_argument('--sigma', type=float, default=0.05, metavar='SD', help='initial noise standard deviation')
     parser.add_argument('--optimize-sigma', action='store_true', help='boolean to denote whether or not to optimize sigma')
+    parser.add_argument('--no-antithetic', action='store_true', help='boolean to not to use antithetic sampling')
     #parser.add_argument('--safe-mutation', action='store_true', help='boolean to denote whether or not to use safe mutations')
     parser.add_argument('--safe-mutation', type=str, default=None, choices=[None, 'ABS', 'SUM', 'SO'], help='string denoting the type of safe mutations to use')
     parser.add_argument('--batch-size', type=int, default=200, metavar='BS', help='batch size agent evaluation (max episode steps for RL setting rollouts)')
@@ -124,20 +124,20 @@ def create_optimizer(args):
     # IPython.embed()
     opt_pars = []
     opt_pars.append({'label': 'model_params', 'params': args.model.parameters()})
-    if args.optimize_sigma:
-        # Parameterize the variance to ensure sigma>0: sigma = 0.5*exp(beta)
-        args.beta = Variable(torch.Tensor([np.log(2*args.sigma**2)]), requires_grad=True)
-        opt_pars.append({'label': 'beta', 'params': args.beta, 'lr': args.lr/10, 'weight_decay': 0})
+    # if args.optimize_sigma:
+    #     # Parameterize the variance to ensure sigma>0: sigma = 0.5*exp(beta)
+    #     args.beta = Variable(torch.Tensor([np.log(2*args.sigma**2)]), requires_grad=True)
+    #     opt_pars.append({'label': 'beta', 'params': args.beta, 'lr': args.lr/10, 'weight_decay': 0})
     # Create optimizer
     OptimizerClass = getattr(optim, args.optimizer)
-    optimizer_input_dict = es.utils.get_inputs_from_args(OptimizerClass.__init__, args)
+    optimizer_input_dict = get_inputs_from_dict(OptimizerClass.__init__, vars(args))
     args.optimizer = OptimizerClass(opt_pars, **optimizer_input_dict)
 
 
 def create_lr_scheduler(args):
     # Create learning rate scheduler
     SchedulerClass = getattr(optim.lr_scheduler, args.lr_scheduler)
-    scheduler_input_dict = es.utils.get_inputs_from_args(SchedulerClass.__init__, args)
+    scheduler_input_dict = get_inputs_from_dict(SchedulerClass.__init__, vars(args))
     # Set mode to maximization if the scheduler is `ReduceLRONPlateau`
     if SchedulerClass is optim.lr_scheduler.ReduceLROnPlateau:
         scheduler_input_dict['mode'] = 'max'
@@ -185,7 +185,7 @@ def create_environment(args):
 
 def create_algorithm(args):
     AlgorithmClass = getattr(es.algorithms, args.algorithm)
-    algorithm_input_dict = es.utils.get_inputs_from_args(AlgorithmClass.__init__, args)
+    algorithm_input_dict = get_inputs_from_dict(AlgorithmClass.__init__, vars(args))
     args.algorithm = AlgorithmClass(**algorithm_input_dict)
 
 

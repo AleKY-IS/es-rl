@@ -107,7 +107,7 @@ def gym_test(model, env, max_episode_length, n_episodes=1000):
         print("{:2d}% CI = {:5.2f} +/- {:<5.2f},  [{:>5.2f}, {:<5.2f}]".format(int(conf*100), mean, half_width, interval[0], interval[1]))
 
 
-def supervised_eval(model, train_loader, return_queue, random_seed, is_antithetic, silent=False, collect_inputs=False, do_cuda=False):
+def supervised_eval(model, train_loader, return_queue, random_seed, silent=False, collect_inputs=False, do_cuda=False):
     """
     Function to evaluate the fitness of a supervised model.
 
@@ -123,7 +123,7 @@ def supervised_eval(model, train_loader, return_queue, random_seed, is_antitheti
     if do_cuda:
         retrn = retrn.cpu()
     retrn = retrn.data.numpy()[0]
-    out = {'seed': random_seed, 'return': retrn, 'is_anti': is_antithetic, 'n_observations': data.data.size()[0]}
+    out = {'seed': random_seed, 'return': retrn, 'n_observations': data.data.size()[0]}
     if collect_inputs:
         # NOTE It is necessary to convert the torch.autograd.Variable to numpy array 
         # in order to correctly transfer this data from the worker thread to the main thread.
