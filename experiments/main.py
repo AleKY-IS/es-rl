@@ -256,4 +256,6 @@ if __name__ == '__main__':
         else:
             args.test_fun(args.algorithm.model, args.env, cuda=args.cuda)
     else:
+        if args.cuda:
+            args.algorithm.model.cuda()
         args.test_fun(args.algorithm.model, args.env, cuda=args.cuda)
