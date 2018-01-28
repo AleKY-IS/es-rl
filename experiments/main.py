@@ -254,6 +254,8 @@ if __name__ == '__main__':
         except FileNotFoundError as latest_e:
             print("Could not load latest model after training: ", latest_e)
         else:
+            if args.cuda:
+                args.algorithm.model.cuda()
             args.test_fun(args.algorithm.model, args.env, cuda=args.cuda)
     else:
         if args.cuda:
