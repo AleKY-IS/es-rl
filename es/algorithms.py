@@ -28,9 +28,9 @@ class Algorithm(object):
         env (gym): A gym environment
         optimizer (torch.optim.Optimizer): A pytorch optimizer
         lr_scheduler (torch.optim.lr_scheduler): A pytorch learning rate scheduler
-        pertubations (int): 
-        batch_size (int): 
-        max_generations (int): 
+        pertubations (int): The number of perturbed models to evaluate
+        batch_size (int): The number of observations for an evaluate (supervised)
+        max_generations (int): The maximum number of generations to train for
         safe_mutation (str): The version of safe mutations to use. Valid options are `ABS`, `SUM` and `SO`
         no_antithetic (bool): If `True`, the algorithm samples without also taking the antithetic sample
         chktp_dir (str): The directory to use to save/load checkpoints. If not absolute, it will be appended without overlap to the path of this file when executing
@@ -59,7 +59,7 @@ class Algorithm(object):
         # Checkpoint attributes
         self.chkpt_dir = chkpt_dir
         self.chkpt_int = chkpt_int
-        # Attirbutes to exclude from the state dictionary
+        # Attributes to exclude from the state dictionary
         self.exclude_from_state_dict = {'env', 'optimizer', 'lr_scheduler', 'model'}
         # Initialize dict for saving statistics
         stat_keys = ['generations', 'episodes', 'observations', 'walltimes',
@@ -330,8 +330,6 @@ class Algorithm(object):
             algorithm_state_dict = torch.load(os.path.join(chkpt_dir, 'algorithm_state_dict.pth'))
             model_state_dict = torch.load(os.path.join(chkpt_dir, 'model_state_dict.pth'))
             optimizer_state_dict = torch.load(os.path.join(chkpt_dir, 'optimizer_state_dict.pth'))
-        # with open(os.path.join(chkpt_dir, 'stats.pkl'), 'rb') as filename:
-        #     self.stats = pickle.load(filename)
         # Load state dicts
         self.load_state_dict(algorithm_state_dict)
         self.model.load_state_dict(model_state_dict)
@@ -350,7 +348,6 @@ class Algorithm(object):
             best_optimizer_stdct (dict, optional): Defaults to None. State dictionary of the associated optimizer
             best_algorithm_stdct (dict, optional): Defaults to None. State dictionary of the associated algorithm
         """
-
         # Save latest model and optimizer state
         torch.save(self.model.state_dict(), os.path.join(self.chkpt_dir, 'model_state_dict.pth'))
         torch.save(self.optimizer.state_dict(), os.path.join(self.chkpt_dir, 'optimizer_state_dict.pth'))
@@ -364,14 +361,12 @@ class Algorithm(object):
         if best_model_stdct is not None:
             torch.save(best_model_stdct, os.path.join(self.chkpt_dir, 'best_model_state_dict.pth'))
             torch.save(best_optimizer_stdct, os.path.join(self.chkpt_dir, 'best_optimizer_state_dict.pth'))
-            # TODO Save best algorithm state
-        
+            torch.save(best_algorithm_stdct, os.path.join(self.chkpt_dir, 'best_algorithm_state_dict.pth'))
+        if not self.silent:
+            print('| checkpoint', end='')
         # Currently, learning rate scheduler has no state_dict and cannot be saved. It can be restored
         # by setting lr_scheduler.last_epoch = last generation index.
         # torch.save(lr_scheduler.state_dict(), os.path.join(self.chkpt_dir, 'lr_scheduler_state_dict.pth'))
-
-        # with open(os.path.join(self.chkpt_dir, 'stats.pkl'), 'wb') as filename:
-        #     pickle.dump(self.stats, filename, pickle.HIGHEST_PROTOCOL)
 
     def state_dict(self):
         """Get the state dictionary of the algorithm.
@@ -379,7 +374,6 @@ class Algorithm(object):
         Returns:
             dict: The state dictionary
         """
-
         return vars(self)
 
     def load_state_dict(self, state_dict):
@@ -394,22 +388,13 @@ class Algorithm(object):
         Raises:
             KeyError: Raised if the specific Algorithm and the dictionary have any keys that are not in common
         """
-        # Only the env, model, optimizer and lr_scheduler should be missing; and they should be missing
-        assert (set(vars(self)) - set(state_dict)) == self.exclude_from_state_dict
-        # Assign values to keys
+        # Certain attributes should be missing while others must be present
+        assert (set(vars(self)) - set(state_dict)) == self.exclude_from_state_dict, 'The loaded state_dict does not correspond to the chosen algorithm'
         for k, v in state_dict.items():
             if k in self.__dict__.keys():
                 self.__dict__[k] = v
-        # Print
         if not self.silent:
-            print(self.__class__.__name__ + ' algorith restored from state dict.')
-                # s = 'The loaded state_dict does not correspond to the chosen algorithm.\n'
-                # s += 'The loaded state_dict is:\n\n'
-                # s += pprint.pformat(state_dict)
-                # s += '\n\nThe algorithm state dict is:\n\n'
-                # s += pprint.pformat(self.state_dict())
-                # print(s)
-                # raise KeyError()
+            print(self.__class__.__name__ + ' algorithm restored from state dict.')
 
 
 class NES(Algorithm):
@@ -570,7 +555,7 @@ class NES(Algorithm):
         last_checkpoint_time = time.time()
 
         # Evaluate parent model
-        self.eval_fun(self.model.cpu(), self.env, return_queue, 'dummy_seed', 'dummy_neg', collect_inputs=True)
+        self.eval_fun(self.model.cpu(), self.env, return_queue, 'dummy_seed', collect_inputs=True)
         unperturbed_out = return_queue.get()
         # Start training loop
         for n_generation in range(start_generation, self.max_generations):
@@ -610,6 +595,7 @@ class NES(Algorithm):
             processes.append(p)
 
             # Get output from processes until all are terminated and join
+            # TODO out = self.get_job_outputs(processes)
             raw_output = []
             while processes:
                 # Update live processes
@@ -621,7 +607,7 @@ class NES(Algorithm):
             workers_end_time = time.time()
             
             # Split into parts
-            # TODO This is all a bit ugly...
+            # TODO This is all a bit ugly. Can't we do something about this?
             seeds = [out['seed'] for out in raw_output]
             returns = [out['return'] for out in raw_output]
             i_observations = [out['n_observations'] for out in raw_output]
@@ -640,21 +626,9 @@ class NES(Algorithm):
             rank = self.unperturbed_rank(returns, unperturbed_out['return'])
             shaped_returns = self.fitness_shaping(returns)
             self.compute_gradients(shaped_returns, seeds)
-            self.model.cpu()
+            self.model.cpu()  # TODO Find out why the optimizer requires model on CPU even with args.cuda = True
             self.optimizer.step()
             self.sigma = self.beta2sigma(self.beta)
-            # if self.optimize_sigma:
-            #     # print("beta {:5.2f} | bg {:5.1f}".format(args.beta.data.numpy()[0], args.beta.grad.data.numpy()[0]))
-            #     # print("update_parameters")
-            #     new_sigma = (0.5*self.beta.exp()).sqrt().data.numpy()[0]
-            #     # print(" | New sigma {:5.2f}".format(new_sigma), end="")
-            #     if new_sigma > self.sigma * 1.2:
-            #         self.sigma = self.sigma * 1.2
-            #     elif new_sigma < self.sigma * 0.8:
-            #         self.sigma = self.sigma * 0.8
-            #     else:
-            #         self.sigma = new_sigma
-            #     self.beta.data = torch.Tensor([np.log(2*self.sigma**2)])
             if type(self.lr_scheduler) == torch.optim.lr_scheduler.ReduceLROnPlateau:
                 # TODO Check that this steps correctly (it steps every patience times and what if returns are negative)
                 self.lr_scheduler.step(unperturbed_out['return'])
@@ -662,6 +636,7 @@ class NES(Algorithm):
                 self.lr_scheduler.step()
 
             # Keep track of best model
+            # TODO bm, bo, ba, mur = self.update_best(unperturbed_out['return'], mur)
             if unperturbed_out['return'] >= max_unperturbed_return:
                 best_model_stdct = self.model.state_dict()
                 best_optimizer_stdct = self.optimizer.state_dict()
@@ -672,6 +647,7 @@ class NES(Algorithm):
             n_episodes += len(returns)
             n_observations += sum(i_observations)
             # Store statistics
+            # TODO self.store_stats()
             self.stats['generations'].append(n_generation)
             self.stats['episodes'].append(n_episodes)
             self.stats['observations'].append(n_observations)
@@ -685,10 +661,6 @@ class NES(Algorithm):
             self.stats['sigma'].append(self.sigma)
             # self.stats['lr'].append(get_lr(self.optimizer))
             self.stats['lr'].append(self.lr_scheduler.get_lr())
-            
-            # # Adjust max length of episodes
-            # if hasattr(args, 'not_var_ep_len') and not args.not_var_ep_len:
-            #     args.batch_size = int(5*max(i_observations))
 
             # Print and checkpoint
             self.print_iter()
@@ -727,3 +699,21 @@ class xNES(Algorithm):
 #     random_seed = np.random.randint(2**30)
 #     two_models = perturb_model(args, parent_model, random_seed, self.env)
 #     return random_seed, two_models
+
+# if self.optimize_sigma:
+#     # print("beta {:5.2f} | bg {:5.1f}".format(args.beta.data.numpy()[0], args.beta.grad.data.numpy()[0]))
+#     # print("update_parameters")
+#     new_sigma = (0.5*self.beta.exp()).sqrt().data.numpy()[0]
+#     # print(" | New sigma {:5.2f}".format(new_sigma), end="")
+#     if new_sigma > self.sigma * 1.2:
+#         self.sigma = self.sigma * 1.2
+#     elif new_sigma < self.sigma * 0.8:
+#         self.sigma = self.sigma * 0.8
+#     else:
+#         self.sigma = new_sigma
+#     self.beta.data = torch.Tensor([np.log(2*self.sigma**2)])
+
+            
+# # Adjust max length of episodes
+# if hasattr(args, 'not_var_ep_len') and not args.not_var_ep_len:
+#     args.batch_size = int(5*max(i_observations))
