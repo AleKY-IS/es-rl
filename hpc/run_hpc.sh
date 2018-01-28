@@ -26,4 +26,4 @@ source ~/mlenv/bin/activate
 # fi
 # cd $HOME
 
-python3 supervised-experiments/mnist_main.py $inputs
+python3 ./experiments/main.py $inputs
