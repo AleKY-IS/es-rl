@@ -2,15 +2,11 @@
 
 # List of input strings to the call
 declare -a INPUTS=(
-				   "--max-generations 5000 --batch-size 1000 --lr-scheduler ExponentialLR --gamma 1 --safe-mutation"
-				   "--max-generations 5000 --batch-size 1000 --lr-scheduler ExponentialLR --gamma 1 --safe-mutation --optimize-sigma"
+				   "--max-generations 5000 --batch-size 1000 --lr-scheduler ExponentialLR --gamma 0.9995"
 				   "--max-generations 5000 --batch-size 1000 --lr-scheduler ExponentialLR --gamma 0.9995 --safe-mutation"
-				   "--max-generations 5000 --batch-size 1000 --lr-scheduler ExponentialLR --gamma 0.9995 --safe-mutation --optimize-sigma"
-				   "--max-generations 5000 --batch-size 1000 --lr-scheduler ReduceLROnPlateau --patience 100 --cooldown 50 --safe-mutation"
-				   "--max-generations 5000 --batch-size 1000 --lr-scheduler ReduceLROnPlateau --patience 100 --cooldown 50 --safe-mutation --optimize-sigma"
 				   )
 SCRIPT="run_hpc.sh"
-REPEATS=2
+REPEATS=10
 
 # Parse inputs
 POSITIONAL=()
