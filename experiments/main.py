@@ -38,45 +38,54 @@ def parse_inputs():
     `test`, `restore`, `cuda` and `silent`.
     
     If a value is not specified, it defaults to the default value also defined here.
+
+    Learning rate decay: 
+        A learning rate decay, gamma, will result in a fraction rho of the original
+        learning rate after 10000 generations.
+        gamma       rho
+        0.99954     1%
+        0.99970     5%
+        0.99977     10%
     """
     parser = argparse.ArgumentParser(description='Experiments')
     # Algorithm
-    parser.add_argument('--algorithm', type=str, default='NES', metavar='ALG', help='model name in es.models')
-    parser.add_argument('--pertubations', type=int, default=40, metavar='N', help='number of perturbed models to make; must be even')
-    parser.add_argument('--sigma', type=float, default=0.05, metavar='SD', help='initial noise standard deviation')
-    parser.add_argument('--optimize-sigma', action='store_true', help='boolean to denote whether or not to optimize sigma')
-    parser.add_argument('--no-antithetic', action='store_true', help='boolean to not to use antithetic sampling')
+    parser.add_argument('--algorithm', type=str, default='NES', metavar='ALG', help='Model name in es.models')
+    parser.add_argument('--pertubations', type=int, default=40, metavar='N', help='Number of perturbed models to make; must be even')
+    parser.add_argument('--sigma', type=float, default=0.05, metavar='SD', help='Initial noise standard deviation')
+    parser.add_argument('--optimize-sigma', action='store_true', help='Boolean to denote whether or not to optimize sigma')
+    parser.add_argument('--no-antithetic', action='store_true', help='Boolean to not to use antithetic sampling')
     #parser.add_argument('--safe-mutation', action='store_true', help='boolean to denote whether or not to use safe mutations')
-    parser.add_argument('--safe-mutation', type=str, default=None, choices=[None, 'ABS', 'SUM', 'SO'], help='string denoting the type of safe mutations to use')
-    parser.add_argument('--batch-size', type=int, default=200, metavar='BS', help='batch size agent evaluation (max episode steps for RL setting rollouts)')
-    parser.add_argument('--max-generations', type=int, default=7500, metavar='MG', help='maximum number of generations')
+    parser.add_argument('--safe-mutation', type=str, default=None, choices=[None, 'ABS', 'SUM', 'SO'], help='String denoting the type of safe mutations to use')
+    parser.add_argument('--batch-size', type=int, default=200, metavar='BS', help='Batch size agent evaluation (max episode steps for RL setting rollouts)')
+    parser.add_argument('--max-generations', type=int, default=7500, metavar='MG', help='Maximum number of generations')
     # Environment
-    parser.add_argument('--env-name', type=str, default='MNIST', metavar='ENV', help='environment')
-    parser.add_argument('--frame-size', type=int, default=84, metavar='FS', help='square size of frames in pixels')
+    parser.add_argument('--env-name', type=str, default='MNIST', metavar='ENV', help='Environment')
+    parser.add_argument('--frame-size', type=int, default=84, metavar='FS', help='Square size of frames in pixels')
     # Model
-    parser.add_argument('--model', type=str, default='MNISTNet', metavar='MOD', help='model name in es.models')
+    parser.add_argument('--model', type=str, default='MNISTNet', metavar='MOD', help='Model name in es.models')
     # Optimizer
-    parser.add_argument('--optimizer', type=str, default='SGD', help='optimizer to use')
-    parser.add_argument('--lr', type=float, default=0.001, metavar='LR', help='optimizer learning rate')
-    parser.add_argument('--momentum', type=float, default=0.9, help='optimizer momentum')
-    parser.add_argument('--nesterov', action='store_true', help='boolean to denote if optimizer momentum is Nesterov')
-    parser.add_argument('--weight-decay', type=float, default=0.001, help='optimizer L2 norm weight decay penalty')
+    parser.add_argument('--optimizer', type=str, default='SGD', help='Optimizer to use')
+    parser.add_argument('--lr', type=float, default=0.001, metavar='LR', help='Optimizer learning rate')
+    parser.add_argument('--momentum', type=float, default=0.9, help='Optimizer momentum')
+    parser.add_argument('--nesterov', action='store_true', help='Boolean to denote if optimizer momentum is Nesterov')
+    parser.add_argument('--weight-decay', type=float, default=0.001, help='Optimizer L2 norm weight decay penalty')
     # Learning rate scheduler
-    parser.add_argument('--lr-scheduler', type=str, default='ExponentialLR', help='learning rate scheduler')
-    parser.add_argument('--gamma', type=float, default=1, help='learning rate decay rate')
-    parser.add_argument('--factor', type=float, default=0.8, help='reduction factor [ReduceLROnPlateau]')
-    parser.add_argument('--patience', type=int, default=100, help='patience before lowering learning rate [ReduceLROnPlateau]')
-    parser.add_argument('--threshold', type=float, default=1e-4, help='threshold for comparing best to current [ReduceLROnPlateau]')
-    parser.add_argument('--cooldown', type=int, default=50, help='cooldown after lowering learning rate before able to do it again [ReduceLROnPlateau]')
-    parser.add_argument('--mode', type=str, default='max', help='the optimization mode (minimization or maximization) [ReduceLROnPlateau]')
-    parser.add_argument('--min-lr', type=float, default=1e-6, help='minimal learning rate [ReduceLROnPlateau]')
-    parser.add_argument('--milestones', type=list, default=50, help='milestones on which to lower learning rate[MultiStepLR]')
-    parser.add_argument('--step-size', type=int, default=50, help='step interval on which to lower learning rate[StepLR]')
+    parser.add_argument('--lr-scheduler', type=str, default='ExponentialLR', help='Learning rate scheduler')
+    parser.add_argument('--gamma', type=float, default=1, help='Learning rate decay rate')
+    parser.add_argument('--factor', type=float, default=0.8, help='Reduction factor [ReduceLROnPlateau]')
+    parser.add_argument('--patience', type=int, default=100, help='Patience before lowering learning rate [ReduceLROnPlateau]')
+    parser.add_argument('--threshold', type=float, default=1e-4, help='Threshold for comparing best to current [ReduceLROnPlateau]')
+    parser.add_argument('--cooldown', type=int, default=50, help='Cooldown after lowering learning rate before able to do it again [ReduceLROnPlateau]')
+    parser.add_argument('--mode', type=str, default='max', help='Optimization mode (minimization or maximization) [ReduceLROnPlateau]')
+    parser.add_argument('--min-lr', type=float, default=1e-6, help='Minimal learning rate [ReduceLROnPlateau]')
+    parser.add_argument('--milestones', type=list, default=50, help='Milestones on which to lower learning rate[MultiStepLR]')
+    parser.add_argument('--step-size', type=int, default=50, help='Step interval on which to lower learning rate[StepLR]')
     # Execution
     parser.add_argument('--chkpt-int', type=int, default=300, help='Interval in seconds for saving checkpoints')
     parser.add_argument('--test', action='store_true', help='Test the model (accuracy or env render), no training')
-    parser.add_argument('--restore', default='', metavar='RES', help='checkpoint from which to restore')
-    parser.add_argument('--cuda', action='store_true', default=False, help='enables CUDA training')
+    parser.add_argument('--id', type=str, default='', metavar='LAB', help='ID of the this run. Appended as folder to path as checkpoints/<ID>/ if not empty')
+    parser.add_argument('--restore', type=str, default='', metavar='RES', help='Checkpoint from which to restore')
+    parser.add_argument('--cuda', action='store_true', default=False, help='Enables CUDA training')
     parser.add_argument('--silent', action='store_true', help='Silence print statements during training')
     args = parser.parse_args()
     return args
@@ -192,7 +201,7 @@ def create_algorithm(args):
 def create_checkpoint(args):
     # Create checkpoint directory if not restoring
     timestamp = datetime.datetime.now().strftime("%y%m%d-%H%M%S.%f")
-    args.chkpt_dir = os.path.join(args.file_path, 'checkpoints', '{:s}-{:s}'.format(args.env_name, timestamp))
+    args.chkpt_dir = os.path.join(args.file_path, 'checkpoints', args.id, '{:s}-{:s}'.format(args.env_name, timestamp))
     if not os.path.exists(args.chkpt_dir):
         os.makedirs(args.chkpt_dir)
 
