@@ -288,7 +288,7 @@ class Algorithm(object):
         s += "Antithetic sampling   {:s}\n".format(str(not self.no_antithetic))
         s += "CUDA                  {:s}\n".format(str(self.cuda))
         with open(os.path.join(self.chkpt_dir, 'init.log'), 'a') as f:
-            f.write(s+"\n\n")
+            f.write(s)
         if not self.silent:
             print(s, end='')
 
@@ -323,13 +323,13 @@ class Algorithm(object):
         """
         # Get state dicts
         if load_best:
-            algorithm_state_dict = torch.load(os.path.join(chkpt_dir, 'best_algorithm_state_dict.pth'))
-            model_state_dict = torch.load(os.path.join(chkpt_dir, 'best_model_state_dict.pth'))
-            optimizer_state_dict = torch.load(os.path.join(chkpt_dir, 'best_optimizer_state_dict.pth'))
+            algorithm_state_dict = torch.load(os.path.join(chkpt_dir, 'state-dict-best-algorithm.pkl'))
+            model_state_dict = torch.load(os.path.join(chkpt_dir, 'state-dict-best-model.pkl'))
+            optimizer_state_dict = torch.load(os.path.join(chkpt_dir, 'state-dict-best-optimizer.pkl'))
         else:
-            algorithm_state_dict = torch.load(os.path.join(chkpt_dir, 'algorithm_state_dict.pth'))
-            model_state_dict = torch.load(os.path.join(chkpt_dir, 'model_state_dict.pth'))
-            optimizer_state_dict = torch.load(os.path.join(chkpt_dir, 'optimizer_state_dict.pth'))
+            algorithm_state_dict = torch.load(os.path.join(chkpt_dir, 'state-dict-algorithm.pkl'))
+            model_state_dict = torch.load(os.path.join(chkpt_dir, 'state-dict-model.pkl'))
+            optimizer_state_dict = torch.load(os.path.join(chkpt_dir, 'state-dict-optimizer.pkl'))
         # Load state dicts
         self.load_state_dict(algorithm_state_dict)
         self.model.load_state_dict(model_state_dict)
@@ -349,32 +349,37 @@ class Algorithm(object):
             best_algorithm_stdct (dict, optional): Defaults to None. State dictionary of the associated algorithm
         """
         # Save latest model and optimizer state
-        torch.save(self.model.state_dict(), os.path.join(self.chkpt_dir, 'model_state_dict.pth'))
-        torch.save(self.optimizer.state_dict(), os.path.join(self.chkpt_dir, 'optimizer_state_dict.pth'))
-        # Save latest algorithm state without model, otimizer, lr_scheduler and env
-        algorithm_state_dict = self.state_dict().copy()
-        entries_to_remove = ('model', 'optimizer', 'lr_scheduler', 'env')
-        for k in entries_to_remove:
-            algorithm_state_dict.pop(k, None)
-        torch.save(algorithm_state_dict, os.path.join(self.chkpt_dir, 'algorithm_state_dict.pth'))
+        torch.save(self.state_dict(exclude=True), os.path.join(self.chkpt_dir, 'state-dict-algorithm.pkl'))
+        torch.save(self.model.state_dict(), os.path.join(self.chkpt_dir, 'state-dict-model.pkl'))
+        torch.save(self.optimizer.state_dict(), os.path.join(self.chkpt_dir, 'state-dict-optimizer.pkl'))
         # Save best model
         if best_model_stdct is not None:
-            torch.save(best_model_stdct, os.path.join(self.chkpt_dir, 'best_model_state_dict.pth'))
-            torch.save(best_optimizer_stdct, os.path.join(self.chkpt_dir, 'best_optimizer_state_dict.pth'))
-            torch.save(best_algorithm_stdct, os.path.join(self.chkpt_dir, 'best_algorithm_state_dict.pth'))
+            torch.save(self.state_dict(exclude=True), os.path.join(self.chkpt_dir, 'state-dict-best-algorithm.pkl'))
+            torch.save(self.model.state_dict(), os.path.join(self.chkpt_dir, 'state-dict-best-model.pkl'))
+            torch.save(self.optimizer.state_dict(), os.path.join(self.chkpt_dir, 'state-dict-best-optimizer.pkl'))
         if not self.silent:
-            print('| checkpoint', end='')
+            print(' | checkpoint', end='')
         # Currently, learning rate scheduler has no state_dict and cannot be saved. It can be restored
         # by setting lr_scheduler.last_epoch = last generation index.
-        # torch.save(lr_scheduler.state_dict(), os.path.join(self.chkpt_dir, 'lr_scheduler_state_dict.pth'))
+        # torch.save(lr_scheduler.state_dict(), os.path.join(self.chkpt_dir, 'state-dict-lr-scheduler.pkl'))
 
-    def state_dict(self):
+    def state_dict(self, exclude=False):
         """Get the state dictionary of the algorithm.
-        
+
+        Args:
+            exclude (bool, optional): Defaults to False. Exlude the attributes defined in self.exlude_from_state_dict
+
         Returns:
             dict: The state dictionary
         """
-        return vars(self)
+        if exclude:
+            algorithm_state_dict = self.state_dict().copy()
+            entries_to_remove = ('model', 'optimizer', 'lr_scheduler', 'env')
+            for k in entries_to_remove:
+                algorithm_state_dict.pop(k, None)
+            return algorithm_state_dict
+        else:
+            return vars(self)
 
     def load_state_dict(self, state_dict):
         """Updates the Algorithm state to that of the given state dictionary.
@@ -414,7 +419,7 @@ class NES(Algorithm):
         self.stats['do_monitor'].append('sigma')
         if self.optimize_sigma:
             # Add beta to optimizer and lr_scheduler self.lr_scheduler.get_lr()[0]/10
-            beta_par = {'label': 'beta', 'params': self.beta, 'lr': self.lr_scheduler.get_lr()[0], 'weight_decay': 0}
+            beta_par = {'label': 'beta', 'params': self.beta, 'lr': self.lr_scheduler.get_lr()[0]/10, 'weight_decay': 0}
             self.add_parameter_to_optimize(beta_par)
         # TODO Maybe dynamically add self.beta parameter as either float based on sigma or 
         #      Variable(torch.Tensor(trsf(sigma))) based on self.optimize_sigma using 
@@ -443,7 +448,6 @@ class NES(Algorithm):
     @staticmethod
     def beta2sigma(beta):
         return np.sqrt(0.5*np.exp(beta)) if type(beta) is np.float64 else (0.5*beta.exp()).sqrt().data.numpy()[0]
-        #return np.sqrt(0.5*np.exp(beta))
 
     def perturb_model(self, random_seed):
         """Perturbs the main model.
@@ -640,7 +644,7 @@ class NES(Algorithm):
             if unperturbed_out['return'] >= max_unperturbed_return:
                 best_model_stdct = self.model.state_dict()
                 best_optimizer_stdct = self.optimizer.state_dict()
-                best_algorithm_stdct = self.state_dict()
+                best_algorithm_stdct = self.state_dict(exclude=True)
                 max_unperturbed_return = unperturbed_out['return']
 
             # Update iter variables
@@ -674,13 +678,13 @@ class NES(Algorithm):
         s =  "Sigma                 {:5.4f}\n".format(self.sigma)
         s += "Optimizing sigma      {:s}\n".format(str(self.optimize_sigma))
         with open(os.path.join(self.chkpt_dir, 'init.log'), 'a') as f:
-            f.write(s)
+            f.write(s + "\n\n")
         s += "\n=================== Running ===================\n"
         print(s)
 
     def print_iter(self):
         super(NES, self).print_iter()
-        s = "| Sig {:5.4f}".format(self.stats['sigma'][-1])
+        s = " | Sig {:5.4f}".format(self.stats['sigma'][-1])
         print(s, end='')
 
 
