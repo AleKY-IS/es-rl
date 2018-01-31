@@ -14,11 +14,13 @@ dependencies:
 - keras
 - pytorch
 - torchvision
-- pandas
 - ipython
+- pandas
 - opencv
+- numba             # Required by umap-learn
 - pip
 - pip:
   - gym[all]
   - universe
+  - umap-learn
 prefix: /Users/Jakob/anaconda/envs/ml
