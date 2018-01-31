@@ -672,6 +672,8 @@ class NES(Algorithm):
                 plot_stats(self.stats, self.chkpt_dir)
                 self.save_checkpoint(best_model_stdct, best_optimizer_stdct, best_algorithm_stdct)
                 last_checkpoint_time = time.time()
+        
+        self.save_checkpoint(best_model_stdct, best_optimizer_stdct, best_algorithm_stdct)
 
     def print_init(self):
         super(NES, self).print_init()
