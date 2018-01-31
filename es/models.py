@@ -14,6 +14,7 @@ def softmax(x, dim):
     x.data = x.data.exp()/s
     return x
 
+
 def log_softmax(x, dim):
     x.data = softmax(x, dim).data.log()
     return x
