@@ -18,6 +18,7 @@ dependencies:
 - pandas
 - opencv
 - numba             # Required by umap-learn
+- dropbox
 - pip
 - pip:
   - gym[all]
