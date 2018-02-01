@@ -4,6 +4,7 @@ channels:
 - defaults
 - conda-forge
 - anaconda-fusion
+- seaborn
 dependencies:
 - python
 - numpy>=1.13       # version due to universe, due to go_vncdriver
@@ -19,6 +20,7 @@ dependencies:
 - opencv
 - numba             # Required by umap-learn
 - dropbox
+- seaborn
 - pip
 - pip:
   - gym[all]
