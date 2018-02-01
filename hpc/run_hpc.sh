@@ -1,7 +1,10 @@
 #!/bin/bash
 
+# Exit if error
+set -e
+
 # Get inputs
-inputs=$@
+INPUTS=$@
 
 # Run install script
 bash hpc_python_setup.sh
@@ -16,14 +19,15 @@ module load scipy/0.19.1-python-3.6.2
 # Activate ml envrionment
 source ~/mlenv/bin/activate
 
-# # Set $HOME if running as a bsub script
-# if [ -z "$BSUB_O_WORKDIR" ]; then
-#     export HOME=$BSUB_O_WORKDIR
-# fi
-# # Set $HOME if running as a qsub script
-# if [ -z "$PBS_O_WORKDIR" ]; then
-#     export HOME=$PBS_O_WORKDIR
-# fi
-# cd $HOME
+# Set $HOME if running as a bsub script
+if [ -z "$BSUB_O_WORKDIR" ]; then
+    export HOME=$BSUB_O_WORKDIR
+fi
+# Set $HOME if running as a qsub script
+if [ -z "$PBS_O_WORKDIR" ]; then
+    export HOME=$PBS_O_WORKDIR
+fi
+cd $HOME
 
-python3 ./experiments/main.py $inputs
+# Execute script
+python3 ../experiments/main.py $INPUTS
