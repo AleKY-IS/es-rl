@@ -13,12 +13,12 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch.autograd import Variable
 
-from context import es
+from context import es, utils
 from es.algorithms import NES, xNES
 from es.models import FFN, DQN, MujocoFFN, MNISTNet
 from es.eval_funs import gym_rollout, gym_test, gym_render, supervised_eval, supervised_test
 from es.envs import create_atari_env
-from es.utils import get_inputs_from_dict
+from utils.misc import get_inputs_from_dict
 from torchvision import datasets, transforms
 
 

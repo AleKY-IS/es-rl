@@ -16,8 +16,8 @@ import torch
 import torch.multiprocessing as mp
 from torch.autograd import Variable
 
-from context import es
-from es.utils import plot_stats, get_inputs_from_dict
+from context import utils
+from utils.plot_utils import plot_stats
 
 
 class Algorithm(object):
