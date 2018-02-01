@@ -17,7 +17,7 @@ import torch.multiprocessing as mp
 from torch.autograd import Variable
 
 from context import es
-from es.utils import get_lr, plot_stats, get_inputs_from_dict
+from es.utils import plot_stats, get_inputs_from_dict
 
 
 class Algorithm(object):
@@ -418,7 +418,7 @@ class NES(Algorithm):
         self.stats['sigma'] = []
         self.stats['do_monitor'].append('sigma')
         if self.optimize_sigma:
-            # Add beta to optimizer and lr_scheduler self.lr_scheduler.get_lr()[0]/10
+            # Add beta to optimizer and lr_scheduler
             beta_par = {'label': 'beta', 'params': self.beta, 'lr': self.lr_scheduler.get_lr()[0]/10, 'weight_decay': 0}
             self.add_parameter_to_optimize(beta_par)
         # TODO Maybe dynamically add self.beta parameter as either float based on sigma or 
@@ -663,7 +663,6 @@ class NES(Algorithm):
             self.stats['return_unp'].append(unperturbed_out['return'])
             self.stats['unp_rank'].append(rank)
             self.stats['sigma'].append(self.sigma)
-            # self.stats['lr'].append(get_lr(self.optimizer))
             self.stats['lr'].append(self.lr_scheduler.get_lr())
 
             # Print and checkpoint

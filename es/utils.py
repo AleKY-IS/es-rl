@@ -30,20 +30,6 @@ def get_inputs_from_dict(method, d):
     return input_dict
 
 
-def get_lr(optimizer):
-    """
-    Returns the current learning rate of an optimizer.
-    If the model parameters are divided into groups, a list of 
-    learning rates is returned. Otherwise, a single float is returned.
-    """
-    lr = []
-    for i, param_group in enumerate(optimizer.param_groups):
-        lr.append(param_group['lr'])
-    if len(lr) == 1:
-        lr = lr[0]
-    return lr
-
-
 def moving_average(y, window=20, center=True):
     """
     Compute a moving average with of `window` observations in `y`. If `centered=True`, the 
