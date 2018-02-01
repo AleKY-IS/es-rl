@@ -1,12 +1,7 @@
 #!/bin/bash
 
-# List of input strings to the call
-declare -a INPUTS=(
-				   "--max-generations 5000 --batch-size 1000 --lr-scheduler ExponentialLR --gamma 0.9995"
-				   "--max-generations 5000 --batch-size 1000 --lr-scheduler ExponentialLR --gamma 0.9995 --safe-mutation"
-				   )
-SCRIPT="run_hpc.sh"
-REPEATS=10
+# Exit if error
+set -e
 
 # Parse inputs
 POSITIONAL=()
@@ -14,8 +9,8 @@ while [[ $# -gt 0 ]]
 do
 	key="$1"
 	case $key in
-	    -n|--name)
-		    TEST_ID="$2"
+	    -i|--id)
+		    ID="$2"
 		    shift # past argument
 		    shift # past value
 		    ;;
@@ -57,24 +52,65 @@ set -- "${POSITIONAL[@]}" # restore positional parameters
 echo $POSITIONAL
 
 # Set defaults if unassigned
-FOO=${TEST_ID:="default-name"}
+FOO=${ID:="E999-default"}
 FOO=${QUEUE:="hpc"}
 FOO=${CORES:="20"}
 FOO=${TIME_LIMIT:="15:00"}
 
-# For each input string, submit the job using bsub
+
+
+# List of input strings to the call
+ID="E001-SM"
+COMMON_IN="--id ${ID} --algorithm NES --optimizer SGD --lr-scheduler ExponentialLR --gamma 0.99970 --env-name MNIST --max-generations 10000 --batch-size 1000"
+declare -a INPUTS=(
+				   "$COMMON_IN"
+				   "$COMMON_IN --safe-mutation SUM"
+				   )
+# declare -a INPUTS=(
+# 				   "--id ${ID} --max-generations 10000 --batch-size 1000 --lr-scheduler ExponentialLR --gamma 0.99970 --safe-mutation SUM"
+# 				   "--id ${ID} --max-generations 10000 --batch-size 1000 --lr-scheduler ExponentialLR --gamma 0.99970 --safe-mutation SUM --optimize-sigma"
+# 				   )
+SCRIPT="run_hpc.sh"
+REPEATS=100
+
+
+
+
+# Prompt user to verify correctness
+echo "The job submissions will look like this:"
+echo ""
 for i in "${!INPUTS[@]}"
 do
-	for ((j=1; j<=REPEATS; ++j))
+	echo "bsub -q $QUEUE -J $NAME -W $TIME_LIMIT -n $CORES -R "span[hosts=1] rusage[mem=6GB]" -o "$NAME.log" "sh $SCRIPT ${INPUTS[i]}""
+done
+echo ""
+echo "Does this look correct? (yes/no): "
+read ANSWER
+if [ "$ANSWER" != "yes" ]
+then
+	echo "Ended submission script. No jobs submitted"
+	exit 0
+fi
+
+# Submit monitoring job
+MONITORER_INPUTS="-d $ID -i 240"
+bsub -q $QUEUE -J "$ID-monitorer" -W  -n 1 -R "span[hosts=1] rusage[mem=6GB]" -o "$ID-monitorer.log" "sh run_monitorer.sh $MONITORER_INPUTS"
+
+
+# Submit each submission type, REPEATS times
+# Outer loop over REPEATS makes different groups visible from start when monitoring
+for ((j=1; j<=REPEATS; ++j))
+do
+	# For each input string, submit the job using bsub
+	for i in "${!INPUTS[@]}"
 	do
 		echo ""
-		NAME="$TEST_ID-$i-$j"
+		NAME="$ID-$i-$j"
 		bsub -q $QUEUE -J $NAME -W $TIME_LIMIT -n $CORES -R "span[hosts=1] rusage[mem=6GB]" -o "$NAME.log" "sh $SCRIPT ${INPUTS[i]}"
 		# source activate ml
 		# python ../experiments/main.py ${INPUTS[i]}
-		echo "It had inputs: ${INPUTS[i]}"
-		echo "The bash call was:"
-		echo "$ bsub -q $QUEUE -J $NAME -W $TIME_LIMIT -n $CORES -R "span[hosts=1] rusage[mem=6GB]" -o "$NAME.log" "sh $SCRIPT ${INPUTS[i]}""
+		echo "Submission : $ bsub -q $QUEUE -J $NAME -W $TIME_LIMIT -n $CORES -R "span[hosts=1] rusage[mem=6GB]" -o "$NAME.log"" # "sh $SCRIPT ${INPUTS[i]}""
+		echo "Script call: $SCRIPT ${INPUTS[i]}"
 	done
 done
 echo ""
