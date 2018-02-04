@@ -17,27 +17,49 @@ import utils.filesystem as fs
 from utils.misc import get_equal_dicts, length_of_longest
 
 
-def load_data(checkpoint_directories, best=False):
-    print("Loading files...")
-    n_files = len(checkpoint_directories)
-    n_chars = len(str(n_files))
-    f = '    {:' + str(n_chars) + 'd}/{:' + str(n_chars) + 'd} files loaded'
-    s = ""
+def load_data(checkpoint_directories, old_mtimes=None, old_data=None, best=False):
+    # Parse inputs
     if best:
         filename = 'state-dict-best-algorithm.pkl'
     else:
         filename = 'state-dict-algorithm.pkl'
-    algorithm_states_list = []
+    n_tot_files = len(checkpoint_directories)
+    if old_mtimes is not None:
+        # Find files that have been modified
+        assert old_data is not None, "If given modification times, must also get old data to overwrite"
+        mtimes = fs.get_modified_times(checkpoint_directories, filename)
+        if len(mtimes)-len(old_mtimes) > 0:
+            mtimes = np.pad(old_mtimes, (None, len(mtimes)-len(old_mtimes)), 'constant')
+        elif len(mtimes)-len(old_mtimes) < 0:
+            mtimes = np.pad(mtimes, (None, len(old_mtimes)-len(mtimes)), 'constant')
+        is_changed = ~np.equal(old_mtimes, mtimes)
+        checkpoint_directories = [d for i, d in enumerate(checkpoint_directories) if is_changed[i]]
+        n_files = len(checkpoint_directories)
+        idxs = np.where(is_changed)[0]
+        algorithm_states_list = old_data
+        print("Loading " + str(n_files) + " modified files of " + str(n_tot_files) + " total files...")
+    else:
+        n_files = len(checkpoint_directories)
+        print("Loading " + str(n_files) + " files...")
+        algorithm_states_list = [None]*len(checkpoint_directories)
+        idxs = range(0,len(checkpoint_directories))
+    # Strings and constants
+    n_chars = len(str(n_files))
+    f = '    {:' + str(n_chars) + 'd}/{:' + str(n_chars) + 'd} files loaded'
+    s = ""
     print(f.format(1, len(checkpoint_directories)), end='\r')
-    for i, chkpt_dir in enumerate(checkpoint_directories):
+    # Loop over files to load (all or only changed ones)
+    i_file = 0
+    for i, chkpt_dir in zip(idxs, checkpoint_directories):
         try:
-            algorithm_states_list.append(torch.load(os.path.join(chkpt_dir, filename)))
+            algorithm_states_list[i] = (torch.load(os.path.join(chkpt_dir, filename)))
         except Exception:
             s += "    Required files not (yet) present in: " + chkpt_dir + "\n"
-        if i + 1 == n_files:
-            print(f.format(i+1, len(checkpoint_directories)), end='\n')
+        if i_file + 1 == n_files:
+            print(f.format(i_file + 1, n_files), end='\n')
         else:
-            print(f.format(i+1, len(checkpoint_directories)), end='\r')
+            print(f.format(i_file + 1, n_files), end='\r')
+        i_file += 1
     if s:
         print(s[:-2])
     return algorithm_states_list
@@ -111,7 +133,7 @@ def create_plots(args, algorithm_states, keys_to_monitor, groups):
 
         # Subset only those series that are done (or the one that is the longest)
         l = length_of_longest(list_of_series)
-        indices = [i for i,series in enumerate(list_of_series) if len(series) == l]
+        indices = [i for i, series in enumerate(list_of_series) if len(series) == l]
         list_of_longest_series = [list_of_series[i] for i in indices]
         list_of_longest_genera = [list_of_genera[i] for i in indices]
         groups_longest_series = groups[indices]
@@ -166,13 +188,15 @@ def wait_for_updates(args, last_refresh, max_chkpt_int, mtimes_last):
     return False
 
 
-def get_data(checkpoint_directories, timeout=30*60, checkevery=30):
-    algorithm_states = load_data(checkpoint_directories)
+def get_data(checkpoint_directories, old_mtimes=None, old_data=None, timeout=30*60, checkevery=30):
+    algorithm_states = load_data(checkpoint_directories, old_mtimes=old_mtimes, old_data=old_data)
     # Check if any data found
     if not algorithm_states:
+        print("No data found.")
+        print("Rechecking directory for files every " + str(checkevery) + " seconds for " + str(int(timeout/60)) + "    minutes.")
         for i in range(0, timeout, checkevery):
             count_down(wait=checkevery)
-            algorithm_states = load_data(checkpoint_directories)
+            algorithm_states = load_data(checkpoint_directories, old_mtimes=old_mtimes, old_data=old_data)
             if algorithm_states:
                 return algorithm_states
         print("No data found to monitor after checking for " + str(int(timeout/60)) + " minutes.")
@@ -253,8 +277,8 @@ def monitor(args):
         # Load data
         print()
         last_refresh = time.time()
+        algorithm_states = get_data(checkpoint_directories, timeout=args.t*60, old_mtimes=mtimes, old_data=algorithm_states)
         mtimes = fs.get_modified_times(checkpoint_directories, 'state-dict-algorithm.pkl')
-        algorithm_states = get_data(checkpoint_directories, timeout=args.t*60)
 
 
 if __name__ == '__main__':
@@ -276,8 +300,15 @@ if __name__ == '__main__':
     except KeyboardInterrupt:
         print("\nMonitoring halted by user KeyboardInterrupt")
 
+"""
+SSHFS
+sshfs s132315@login.hpc.dtu.dk:/zhome/c2/b/86488 ~/mnt
 
-# sshfs s132315@login.hpc.dtu.dk:/zhome/c2/b/86488 ~/mnt
-# python monitor.py --dir ~/mnt/Documents/es-rl/experiments/checkpoints/E001-SM/
-# python monitor.py --dir /Users/Jakob/mnt/Documents/es-rl/supervised-experiments/checkpoints/
-# python monitor.py --dir sftp://s132315@login.hpc.dtu.dk/zhome/c2/b/86488/Documents/es-rl/experiments/checkpoints/E001-SM
+LINUX
+python monitor.py -d ~/mnt/Documents/es-rl/experiments/checkpoints/E001-SM/ -c
+
+MAC
+python monitor.py -d /Users/Jakob/mnt/Documents/es-rl/experiments/checkpoints/ES001-SM/ -c
+
+python monitor.py -d sftp://s132315@login.hpc.dtu.dk/zhome/c2/b/86488/Documents/es-rl/experiments/checkpoints/E001-SM
+"""
