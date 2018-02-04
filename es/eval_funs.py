@@ -10,7 +10,7 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 
 
-def gym_rollout(args, model, random_seed, return_queue, env, is_antithetic, collect_inputs=False):
+def gym_rollout(model, env, return_queue, random_seed, silent=False, collect_inputs=False, do_cuda=False, max_episode_length=int(1e6), **kwargs):
     """
     Function to do rollouts of a policy defined by `model` in given environment
     """
@@ -23,14 +23,16 @@ def gym_rollout(args, model, random_seed, return_queue, env, is_antithetic, coll
     n_observations = 0
     done = False
     if collect_inputs:
-        prealdim = (args.batch_size,)
+        # Collect `collect_inputs` observations
+        prealdim = (int(collect_inputs),)
         for d in state.size()[1:]:
             prealdim = prealdim + (d,)
         inputs = torch.zeros(prealdim)
+        
     # Rollout
-    while not done and n_observations < args.batch_size:
+    while not done and n_observations < max_episode_length:
         # Collect states as batch inputs 
-        if collect_inputs:
+        if collect_inputs and collect_inputs > n_observations:
             inputs[n_observations,] = state.data
         # Choose action
         actions = model(state)
@@ -41,8 +43,10 @@ def gym_rollout(args, model, random_seed, return_queue, env, is_antithetic, coll
         n_observations += 1
         # Cast state
         state = Variable(torch.from_numpy(state).float(), requires_grad=True).unsqueeze(0)
-    out = {'seed': random_seed, 'return': retrn, 'is_anti': is_antithetic, 'n_observations': n_observations}
+    out = {'seed': random_seed, 'return': retrn, 'n_observations': n_observations}
     if collect_inputs:
+        if n_observations < collect_inputs:
+            inputs = inputs[:n_observations,]
         out['inputs'] = inputs.numpy()
     return_queue.put(out)
 
@@ -76,12 +80,13 @@ def gym_render(model, env, max_episode_length):
         print("\nEnded test session by keyboard interrupt")
 
 
-def gym_test(model, env, max_episode_length, n_episodes=1000):
+def gym_test(model, env, max_episode_length, n_episodes, **kwargs):
     """
     Tests the learned model on the environment.
     """
     returns = [0]*n_episodes
     for i_episode in range(n_episodes):
+        print('Episode {:d}/{:d}'.format(i_episode, n_episodes))
         # Reset environment
         state = env.reset()
         state = Variable(torch.from_numpy(state).float(), volatile=True).unsqueeze(0)
@@ -107,7 +112,7 @@ def gym_test(model, env, max_episode_length, n_episodes=1000):
         print("{:2d}% CI = {:5.2f} +/- {:<5.2f},  [{:>5.2f}, {:<5.2f}]".format(int(conf*100), mean, half_width, interval[0], interval[1]))
 
 
-def supervised_eval(model, train_loader, return_queue, random_seed, silent=False, collect_inputs=False, do_cuda=False):
+def supervised_eval(model, train_loader, return_queue, random_seed, silent=False, collect_inputs=False, do_cuda=False, **kwargs):
     """
     Function to evaluate the fitness of a supervised model.
 
