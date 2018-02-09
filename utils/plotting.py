@@ -119,8 +119,7 @@ def timeseries_median_grouped(xdatas, ydatas, groups, xlabel, ylabel):
         x = [xdatas[i] for i in g_indices]
         x = get_longest_sublists(x)[0]
         x_subsampled = x[::100]
-        # ax = sns.tsplot(value=ylabel, data=ydata_subsampled, time=x_subsampled, ci=[68, 95], estimator=np.median, color=colors[g])
-        ax = sns.tsplot(value=ylabel, data=ydata_subsampled, time=x_subsampled, ci=[68, 95], estimator=np.mean, color=colors[g])
+        ax = sns.tsplot(value=ylabel, data=ydata_subsampled, time=x_subsampled, ci="sd", estimator=np.mean, color=colors[g])
     lines = list(filter(lambda c: type(c)==mpl.lines.Line2D, ax.get_children()))
     plt.legend(handles=lines, labels=legend)
     plt.xlabel(xlabel)
