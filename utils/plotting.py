@@ -178,6 +178,11 @@ def plot_stats(stats, chkpt_dir):
         for key in ['lr']:
             pstats[key] = [vals_group[0] for vals_group in pstats[key]]
 
+    # Computations/Transformations
+    abs_walltimes = np.array(pstats['walltimes']) + pstats['start_time']
+    generation_times = np.diff(np.array([pstats['start_time']] + list(abs_walltimes)))
+    parallel_fraction = np.array(pstats['workertimes'])/generation_times
+
     # NOTE: Possible x-axis are: generations, episodes, observations, walltimes
 
     fig = plt.figure()
@@ -207,9 +212,9 @@ def plot_stats(stats, chkpt_dir):
     plt.close(fig)
 
     fig = plt.figure()
-    pltVarS, = plt.plot(pstats['generations'], moving_average(pstats['return_var']), label='ma')
+    pltVarS, = plt.plot(pstats[x], moving_average(pstats['return_var']), label='ma')
     plt.gca().set_prop_cycle(None)
-    pltVar, = plt.plot(pstats['generations'], pstats['return_var'], alpha=back_alpha, label='raw')
+    pltVar, = plt.plot(pstats[x], pstats['return_var'], alpha=back_alpha, label='raw')
     plt.ylabel('Return variance')
     plt.xlabel('Generations')
     plt.legend(handles=[pltVarS, pltVar])
@@ -217,9 +222,9 @@ def plot_stats(stats, chkpt_dir):
     plt.close(fig)
 
     fig = plt.figure()
-    pltRankS, = plt.plot(pstats['generations'], moving_average(pstats['unp_rank']), label='ma')
+    pltRankS, = plt.plot(pstats[x], moving_average(pstats['unp_rank']), label='ma')
     plt.gca().set_prop_cycle(None)
-    pltRank, = plt.plot(pstats['generations'], pstats['unp_rank'], alpha=back_alpha, label='raw')
+    pltRank, = plt.plot(pstats[x], pstats['unp_rank'], alpha=back_alpha, label='raw')
     plt.ylabel('Unperturbed rank')
     plt.xlabel('Generations')
     plt.legend(handles=[pltRankS, pltRank])
@@ -227,9 +232,9 @@ def plot_stats(stats, chkpt_dir):
     plt.close(fig)
 
     fig = plt.figure()
-    pltVar, = plt.plot(pstats['generations'][:-1], moving_average(np.diff(pstats['walltimes'])), label='ma')
+    pltVar, = plt.plot(pstats[x], moving_average(generation_times), label='ma')
     plt.gca().set_prop_cycle(None)
-    pltVar, = plt.plot(pstats['generations'][:-1], np.diff(pstats['walltimes']), alpha=back_alpha, label='raw')
+    pltVar, = plt.plot(pstats[x], generation_times, alpha=back_alpha, label='raw')
     plt.ylabel('Walltime per generation')
     plt.xlabel('Generations')
     plt.legend(handles=[pltVar])
@@ -237,7 +242,7 @@ def plot_stats(stats, chkpt_dir):
     plt.close(fig)
 
     fig = plt.figure()
-    pltVar, = plt.plot(pstats['generations'], pstats['sigma'], label='sigma')
+    pltVar, = plt.plot(pstats[x], pstats['sigma'], label='sigma')
     plt.ylabel('Sigma')
     plt.xlabel('Generations')
     plt.legend(handles=[pltVar])
@@ -245,7 +250,7 @@ def plot_stats(stats, chkpt_dir):
     plt.close(fig)
 
     fig = plt.figure()
-    pltVar, = plt.plot(pstats['generations'], pstats['lr'], label='lr')
+    pltVar, = plt.plot(pstats[x], pstats['lr'], label='lr')
     plt.ylabel('Learning rate')
     plt.xlabel('Generations')
     plt.legend(handles=[pltVar])
@@ -253,7 +258,7 @@ def plot_stats(stats, chkpt_dir):
     plt.close(fig)
 
     fig = plt.figure()
-    pltVar, = plt.plot(pstats['generations'], pstats['walltimes'], label='walltime')
+    pltVar, = plt.plot(pstats[x], pstats['walltimes'], label='walltime')
     plt.ylabel('Walltime')
     plt.xlabel('Generations')
     plt.legend(handles=[pltVar])
@@ -261,9 +266,19 @@ def plot_stats(stats, chkpt_dir):
     plt.close(fig)
 
     fig = plt.figure()
-    pltVar, = plt.plot(pstats['generations'], pstats['parallel_times'], label='parallel times')
-    plt.ylabel('Parallel time')
+    pltVar, = plt.plot(pstats[x], moving_average(pstats['workertimes']), label='worker times')
+    plt.ylabel('Worker time')
     plt.xlabel('Generations')
     plt.legend(handles=[pltVar])
-    fig.savefig(os.path.join(chkpt_dir, x[0:3] + '_parallel_time.pdf'))
+    fig.savefig(os.path.join(chkpt_dir, x[0:3] + '_worker_time.pdf'))
+    plt.close(fig)
+
+    fig = plt.figure()
+    pltVar, = plt.plot(pstats[x], moving_average(parallel_fraction), label='ma')
+    plt.gca().set_prop_cycle(None)
+    pltVar, = plt.plot(pstats[x], parallel_fraction, alpha=back_alpha, label='raw')
+    plt.ylabel('Parallel fraction')
+    plt.xlabel('Generations')
+    plt.legend(handles=[pltVar])
+    fig.savefig(os.path.join(chkpt_dir, x[0:3] + '_parallel_fraction.pdf'))
     plt.close(fig)
