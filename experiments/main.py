@@ -14,7 +14,7 @@ import torch.optim as optim
 from torch.autograd import Variable
 
 from context import es, utils
-from es.algorithms import NES, xNES
+from es.algorithms import ES, xNES
 from es.models import FFN, DQN, MujocoFFN, MNISTNet
 from es.eval_funs import gym_rollout, gym_test, gym_render, supervised_eval, supervised_test
 from es.envs import create_atari_env
@@ -46,20 +46,22 @@ def parse_inputs():
         0.99954     1%
         0.99970     5%
         0.99977     10%
+
+    MNIST SGD settings
+        --optimizer SGD --lr 0.001 --momentum 0.9 --safe-mutation SUM --sigma 0.05 --pertubations 40
     """
     parser = argparse.ArgumentParser(description='Experiments')
     # Algorithm
-    parser.add_argument('--algorithm', type=str, default='NES', metavar='ALG', help='Model name in es.models')
+    parser.add_argument('--algorithm', type=str, default='ES', metavar='ALG', help='Model name in es.models')
     parser.add_argument('--pertubations', type=int, default=40, metavar='N', help='Number of perturbed models to make; must be even')
     parser.add_argument('--sigma', type=float, default=0.05, metavar='SD', help='Initial noise standard deviation')
     parser.add_argument('--optimize-sigma', action='store_true', help='Boolean to denote whether or not to optimize sigma')
     parser.add_argument('--no-antithetic', action='store_true', help='Boolean to not to use antithetic sampling')
-    #parser.add_argument('--safe-mutation', action='store_true', help='boolean to denote whether or not to use safe mutations')
     parser.add_argument('--safe-mutation', type=str, default=None, choices=[None, 'ABS', 'SUM', 'SO'], help='String denoting the type of safe mutations to use')
     parser.add_argument('--batch-size', type=int, default=200, metavar='BS', help='Batch size agent evaluation (max episode steps for RL setting rollouts)')
     parser.add_argument('--max-generations', type=int, default=7500, metavar='MG', help='Maximum number of generations')
     # Environment
-    parser.add_argument('--env-name', type=str, default='MNIST', metavar='ENV', help='Environment')
+    parser.add_argument('--env-name', type=str, default='MNIST', metavar='ENV', help='RL environment or dataset')
     parser.add_argument('--frame-size', type=int, default=84, metavar='FS', help='Square size of frames in pixels')
     # Model
     parser.add_argument('--model', type=str, default='MNISTNet', metavar='MOD', help='Model name in es.models')
@@ -87,6 +89,8 @@ def parse_inputs():
     parser.add_argument('--restore', type=str, default='', metavar='RES', help='Checkpoint from which to restore')
     parser.add_argument('--cuda', action='store_true', default=False, help='Enables CUDA training')
     parser.add_argument('--silent', action='store_true', help='Silence print statements during training')
+    parser.add_argument('--do-permute-train-labels', action='store_true', help='Permute the training labels randomly')
+    parser.add_argument('--lr-from-pertubations', type=int, default=0, help='Get the learning rate heuristically from the number of pertubations')
     args = parser.parse_args()
     return args
 
@@ -130,13 +134,8 @@ def create_model(args):
 
 def create_optimizer(args):
     # Parameters to optimize are model parameters that require gradient and sigma if chosen
-    # IPython.embed()
     opt_pars = []
     opt_pars.append({'label': 'model_params', 'params': args.model.parameters()})
-    # if args.optimize_sigma:
-    #     # Parameterize the variance to ensure sigma>0: sigma = 0.5*exp(beta)
-    #     args.beta = Variable(torch.Tensor([np.log(2*args.sigma**2)]), requires_grad=True)
-    #     opt_pars.append({'label': 'beta', 'params': args.beta, 'lr': args.lr/10, 'weight_decay': 0})
     # Create optimizer
     OptimizerClass = getattr(optim, args.optimizer)
     optimizer_input_dict = get_inputs_from_dict(OptimizerClass.__init__, vars(args))
@@ -144,13 +143,16 @@ def create_optimizer(args):
 
 
 def create_lr_scheduler(args):
-    # Create learning rate scheduler
-    SchedulerClass = getattr(optim.lr_scheduler, args.lr_scheduler)
-    scheduler_input_dict = get_inputs_from_dict(SchedulerClass.__init__, vars(args))
-    # Set mode to maximization if the scheduler is `ReduceLRONPlateau`
-    if SchedulerClass is optim.lr_scheduler.ReduceLROnPlateau:
-        scheduler_input_dict['mode'] = 'max'
-    args.lr_scheduler = SchedulerClass(**scheduler_input_dict)
+    if args.lr_scheduler is not None:
+        # Create learning rate scheduler
+        SchedulerClass = getattr(optim.lr_scheduler, args.lr_scheduler)
+        scheduler_input_dict = get_inputs_from_dict(SchedulerClass.__init__, vars(args))
+        # Set mode to maximization if the scheduler is `ReduceLRONPlateau`
+        if SchedulerClass is optim.lr_scheduler.ReduceLROnPlateau:
+            scheduler_input_dict['mode'] = 'max'
+        args.lr_scheduler = SchedulerClass(**scheduler_input_dict)
+    else:
+        args.lr_scheduler = None
 
 
 def create_environment(args):
@@ -172,6 +174,9 @@ def create_environment(args):
                                           transforms.Normalize(
                                               (0.1307,), (0.3081,))
                                       ]))
+            if not args.test and args.do_permute_train_labels:
+                # Permute the labels randomly to test 'Rethinking Generalization'
+                data_set.train_labels = torch.LongTensor(np.random.permutation(data_set.train_labels))
             args.env = torch.utils.data.DataLoader(data_set,
                                                    batch_size=batch_size, 
                                                    shuffle=True, **data_cuda_kwargs)
@@ -216,11 +221,38 @@ def get_eval_funs(args):
         args.test_fun = supervised_test
 
 
+def get_lr_from_pertubations(args):
+    # Problem dimension from pertubations
+    ##IPython.embed()
+    d = np.exp((args.pertubations-4)/3)
+    if args.lr_from_pertubations == 1:
+        args.lr = (9 + 3 * np.log(d))/(5*d**(3/2))
+    elif args.lr_from_pertubations == 2:
+        #args.lr = (3 + np.log(d))/(5*d**(1/2))
+        args.lr = (3 + np.log(d))/(30*d**(1/2))
+    elif args.lr_from_pertubations == 3:
+        args.lr = d**(1/2)/5*(3 + np.log(d))
+    return args
+
+def test_model(args):
+    if args.cuda:
+        args.algorithm.model.cuda()
+    if args.is_rl:
+        args.test_fun(args.algorithm.model, args.env, max_episode_length=args.batch_size, n_episodes=100)
+        args.rend_fun(args.algorithm.model, args.env, max_episode_length=args.batch_size)
+    else:
+        args.test_fun(args.algorithm.model, args.env, cuda=args.cuda)
+        #args.rend_fun(args.algorithm.mode, args.env, max_episode_length=args.batch_size)
+
+
 if __name__ == '__main__':
     # Parse and validate
     args = parse_inputs()
     validate_inputs(args)
     args.file_path = os.path.split(os.path.realpath(__file__))[0]
+    # Get hyper parameters
+    if args.lr_from_pertubations:
+        args = get_lr_from_pertubations(args)
     # Create environment, model, optimizer and learning rate scheduler
     create_environment(args)
     create_model(args)
@@ -235,13 +267,14 @@ if __name__ == '__main__':
     create_algorithm(args)
     if args.restore:
         args.algorithm.load_checkpoint(args.restore, load_best=args.test)
+        args.chkpt_dir = args.restore
     # Get input dictionary of args for algorithm
     # args_dict = vars(args)
     
     # Set number of OMP threads for CPU computations
     # NOTE: This is needed for my personal stationary Linux PC for partially unknown reasons
     if platform.system() == 'Linux':
-        torch.set_num_threads(1)  
+        torch.set_num_threads(1)
 
     # Execute
     if not args.test:
@@ -263,10 +296,22 @@ if __name__ == '__main__':
         except FileNotFoundError as latest_e:
             print("Could not load latest model after training: ", latest_e)
         else:
-            if args.cuda:
-                args.algorithm.model.cuda()
-            args.test_fun(args.algorithm.model, args.env, cuda=args.cuda)
+            test_model(args)
     else:
-        if args.cuda:
-            args.algorithm.model.cuda()
-        args.test_fun(args.algorithm.model, args.env, cuda=args.cuda)
+        test_model(args)
+
+
+"""
+Fashion-MNIST
+-----------------
+0	T-shirt/top
+1	Trouser
+2	Pullover
+3	Dress
+4	Coat
+5	Sandal
+6	Shirt
+7	Sneaker
+8	Bag
+9	Ankle boot
+"""
