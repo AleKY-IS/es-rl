@@ -1,11 +1,10 @@
 import os
+import random
 import time
 
 import dropbox
 from dropbox.exceptions import ApiError, InternalServerError
 from dropbox.files import WriteMode
-
-import random
 
 
 def get_dropbox_client(token_file):
@@ -14,10 +13,11 @@ def get_dropbox_client(token_file):
     return dropbox.Dropbox(token)
 
 
-def copy_dir(dbx, source_dir, target_dir, mode='overwrite', silent=False):
+def copy_dir(dbx, source_dir, target_dir, mode='overwrite'):
     print("Uploading directory to dropbox...")
     print("    Source: " + source_dir)
     print("    Target: " + target_dir)
+    ns = 0
     for root, dirs, files in os.walk(source_dir):
         # Create directories (includes empty ones)
         for d in dirs:
@@ -32,8 +32,10 @@ def copy_dir(dbx, source_dir, target_dir, mode='overwrite', silent=False):
             # Put file
             with open(local_path, 'rb') as f:
                 try:
+                    print(" " * ns, end='\r')
                     print("    Uploading: " + relative_path, end='\r')
                     dbx.files_upload(f.read(), dropbox_path, mode=WriteMode('overwrite'))
+                    ns = 15 + len(relative_path)
                 except ApiError as err:
                     # This checks for the specific error where a user doesn't have
                     # enough Dropbox space quota to upload this file
@@ -53,3 +55,9 @@ def copy_dir(dbx, source_dir, target_dir, mode='overwrite', silent=False):
                         print("Success.")
                     except:
                         print("Failed.")
+    print(" " * ns, end='\r')
+    print("    Uploading done")
+
+
+def upload_file(dbx, source, target, mode='overwrite'):
+    raise NotImplementedError
