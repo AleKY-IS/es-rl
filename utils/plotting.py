@@ -23,6 +23,17 @@ def moving_average(y, window=100, center=True):
     return pd.Series(y).rolling(window=window, center=center).mean()
 
 
+def remove_duplicate_labels(ax):
+    handles, labels = ax.get_legend_handles_labels()
+    i =1
+    while i<len(labels):
+        if labels[i] in labels[:i]:
+            del(labels[i])
+            del(handles[i])
+        else:
+            i +=1
+    ax.legend(handles, labels)
+
 # def timeseries_single(xdata, ydata, xlabel, ylabel, plotlabel=None):
 #     fig = plt.figure()
 #     ydata = moving_average(ydata)
@@ -31,7 +42,7 @@ def moving_average(y, window=100, center=True):
 #     plt.ylabel(ylabel)
 
 
-def timeseries(xdatas, ydatas, xlabel, ylabel, plotlabels=None):
+def timeseries(xdatas, ydatas, xlabel, ylabel, plotlabels=None, **kwargs):
     if plotlabels is None:
         plotlabels = [None]*len(xdatas)
     fig = plt.figure()
