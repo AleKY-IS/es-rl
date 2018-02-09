@@ -248,3 +248,11 @@ def plot_stats(stats, chkpt_dir):
     plt.legend(handles=[pltVar])
     fig.savefig(os.path.join(chkpt_dir, x[0:3] + '_time.pdf'))
     plt.close(fig)
+
+    fig = plt.figure()
+    pltVar, = plt.plot(pstats['generations'], pstats['parallel_times'], label='parallel times')
+    plt.ylabel('Parallel time')
+    plt.xlabel('Generations')
+    plt.legend(handles=[pltVar])
+    fig.savefig(os.path.join(chkpt_dir, x[0:3] + '_parallel_time.pdf'))
+    plt.close(fig)
