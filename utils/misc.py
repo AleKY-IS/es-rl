@@ -1,4 +1,7 @@
 import inspect
+import itertools
+
+import IPython
 import numpy as np
 
 
@@ -17,17 +20,19 @@ def get_equal_dicts(ds, ignored_keys=None):
         np.array: Array of group indices.
     """
     assert len(ds) >= 2, "The list must have at least two elements"
-    match = False
     groups = np.zeros(len(ds), dtype=int)
-    for (i, d) in enumerate(ds[1:]):
+    match = False
+    for i, d in enumerate(ds[1:]):
         i += 1
-        for prev_i, prev_d in enumerate(ds[0:i]):
+        for prev_i, prev_d in enumerate(ds[:i]):
             if are_dicts_equal(d, prev_d, ignored_keys=ignored_keys):
                 groups[i] = groups[prev_i]
                 match = True
                 break
+        # If no matches, create new group
         if not match:
             groups[i] = groups.max() + 1
+        match = False
     return groups
 
 
@@ -76,7 +81,7 @@ def length_of_longest(l):
     """
     if not isinstance(l, list):
         return 0
-    return max([len(l),] + [len(subl) for subl in l if isinstance(subl, list)] + [length_of_longest(subl) for subl in l])
+    return max([len(l)] + [len(subl) for subl in l if isinstance(subl, list)] + [length_of_longest(subl) for subl in l])
 
 
 def get_inputs_from_dict(method, d):
@@ -94,3 +99,61 @@ def get_inputs_from_dict(method, d):
         if a in d.keys():
             input_dict[a] = d[a]
     return input_dict
+
+
+def is_nearly_equal(a, b, eps=None):
+    """Compares floating point numbers
+    
+    Args:
+        a (float): First number
+        b (float): Second number
+        eps (float, optional): Defaults to None. Absolute cutoff value for near equality
+    
+    Raises:
+        NotImplementedError: [description]
+    
+    Returns:
+        bool: Whether a and b are nearly equal or not
+    """
+    # Validate input
+    assert(not hasattr(a, "__len__") and not hasattr(b, "__len__"), 
+           'Inputs must be scalar')
+    # Use machine precision if none given
+    if eps is None:
+        assert type(a) == type(b), "Cannot infer machine precision if types are different"
+        # Numpy type
+        if type(a).__module__ == np.__name__:
+            finfo = np.finfo(type(a))
+        else: 
+            raise NotImplementedError('Cannot infer machine epsilon for non-numpy types')
+    # Compare
+    diff = np.abs(a - b)
+    if a == b:
+        # Shortcut and handles infinities
+        return True
+    elif (a == 0 or b == 0 or diff < finfo.min):
+        # a or b or both are zero or are very close to it.
+        # Relative error is less meaningful here, so we check absolute error.
+        return diff < (finfo.eps * finfo.min)
+    else:
+        # Relative error
+        return diff / np.min(np.abs(a) + np.abs(b), finfo.max) < finfo.eps
+
+    
+""" 
+public static boolean nearlyEqual(float a, float b, float epsilon) {
+final float absA = Math.abs(a);
+final float absB = Math.abs(b);
+final float diff = Math.abs(a - b);
+
+if (a == b) { // shortcut, handles infinities
+    return true;
+} else if (a == 0 || b == 0 || diff < Float.MIN_NORMAL) {
+    // a or b is zero or both are extremely close to it
+    // relative error is less meaningful here
+    return diff < (epsilon * Float.MIN_NORMAL);
+} else { // use relative error
+    return diff / Math.min((absA + absB), Float.MAX_VALUE) < epsilon;
+}
+}
+"""
