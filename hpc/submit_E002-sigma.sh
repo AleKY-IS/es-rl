@@ -60,19 +60,20 @@ FOO=${TIME_LIMIT:="24:00"}
 
 
 # List of input strings to the call
-ID="E001-SM"
-COMMON_IN="--id ${ID} --algorithm ES --optimizer SGD --lr-scheduler ExponentialLR --gamma 0.99970 --env-name MNIST --max-generations 10000 --batch-size 1000"
+ID="E002-sigma"
+COMMON_IN="--id ${ID} --algorithm ES --optimizer SGD --lr-scheduler ExponentialLR --gamma 0.99970 --env-name MNIST --max-generations 10000 --batch-size 1000 --safe-mutation SUM"
 declare -a INPUTS=(
 				   "$COMMON_IN"
-				   "$COMMON_IN --safe-mutation SUM"
+				   "$COMMON_IN --optimize-sigma"
 				   )
 SCRIPT="run_hpc.sh"
-REPEATS=100
+REPEATS=10
 
 
 # Monitorer
 let TOTAL_TIME=24*${#INPUTS[@]}*$REPEATS/8
-MONITORER_INPUTS="-d $ID -i 120 -c"
+TOTAL_TIME="$TOTAL_TIME:00"
+MONITORER_INPUTS="-d $ID -t 120 -c"
 
 # Prompt user to verify correctness
 echo "The job submissions will look like this:"
@@ -80,6 +81,7 @@ echo ""
 echo "bsub -q $QUEUE -J "$ID-monitorer" -W $TOTAL_TIME -n 1 -R "span[hosts=1] rusage[mem=6GB]" -o "$ID-monitorer.log" "sh run_monitorer.sh $MONITORER_INPUTS""
 for i in "${!INPUTS[@]}"
 do
+	NAME="$ID-$i-0"
 	echo "bsub -q $QUEUE -J $NAME -W $TIME_LIMIT -n $CORES -R "span[hosts=1] rusage[mem=6GB]" -o "$NAME.log" "sh $SCRIPT ${INPUTS[i]}""
 done
 echo ""

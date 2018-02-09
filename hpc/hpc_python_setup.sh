@@ -35,9 +35,13 @@ which python3
 if [ ! -d ~/mlenv ]
 then
     python3 -m venv ~/mlenv --copies
-    pip3 install matplotlib scikit-learn tensorflow keras ipython pandas gym[all] universe
-    pip3 install http://download.pytorch.org/whl/cu90/torch-0.3.0.post4-cp36-cp36m-linux_x86_64.whl 
-    pip3 install torchvision
+    source ~/mlenv/bin/activate
+    pip3 install -U matplotlib scikit-learn tensorflow keras ipython pandas seaborn dropbox
+    pip3 install -U requests>=2.18.1  # Version to fix "float() argument must be a string or a number, not 'Timeout'" error in _validate_timeout in urllib3/utils.timeout.py l. 124
+    pip3 install -U gym==0.9.5  # Version to fix bug with missing gym.benchmarks
+    pip3 install -U universe
+    pip3 install -U http://download.pytorch.org/whl/cu90/torch-0.3.0.post4-cp36-cp36m-linux_x86_64.whl 
+    pip3 install -U torchvision
 fi
 source ~/mlenv/bin/activate
 

@@ -60,27 +60,22 @@ FOO=${TIME_LIMIT:="24:00"}
 
 
 # List of input strings to the call
-ID="E001-SM"
-COMMON_IN="--id ${ID} --algorithm ES --optimizer SGD --lr-scheduler ExponentialLR --gamma 0.99970 --env-name MNIST --max-generations 10000 --batch-size 1000"
-declare -a INPUTS=(
-				   "$COMMON_IN"
-				   "$COMMON_IN --safe-mutation SUM"
-				   )
 SCRIPT="run_hpc.sh"
-REPEATS=100
-
-
-# Monitorer
-let TOTAL_TIME=24*${#INPUTS[@]}*$REPEATS/8
-MONITORER_INPUTS="-d $ID -i 120 -c"
+REPEATS=1
+declare -a PERTUBATIONS=(1 2 4 8 16 32 64 128 256 512 1024 2048 4096 8192 16384)
+declare -a CORES=(1 2 4 8 12 16 20 24)
 
 # Prompt user to verify correctness
 echo "The job submissions will look like this:"
 echo ""
-echo "bsub -q $QUEUE -J "$ID-monitorer" -W $TOTAL_TIME -n 1 -R "span[hosts=1] rusage[mem=6GB]" -o "$ID-monitorer.log" "sh run_monitorer.sh $MONITORER_INPUTS""
-for i in "${!INPUTS[@]}"
+for j in "${!CORES[@]}"
 do
-	echo "bsub -q $QUEUE -J $NAME -W $TIME_LIMIT -n $CORES -R "span[hosts=1] rusage[mem=6GB]" -o "$NAME.log" "sh $SCRIPT ${INPUTS[i]}""
+    for i in "${!PERTUBATIONS[@]}"
+    do
+        ID="E004-scaling-n${CORES[j]}"
+        INPUT="--id ${ID} --algorithm ES --optimizer SGD --lr-scheduler ExponentialLR --gamma 0.99970 --env-name MNIST --max-generations 100 --batch-size 1000 --safe-mutation SUM --chkpt-int 10000 --pertubations ${PERTUBATIONS[i]}"
+	    echo "bsub -q $QUEUE -J $NAME -W $TIME_LIMIT -n ${CORES[j]} -R "span[hosts=1] rusage[mem=6GB]" -o "$NAME.log" "sh $SCRIPT $INPUT""
+    done
 done
 echo ""
 echo "Does this look correct? (yes/no): "
@@ -91,25 +86,19 @@ then
 	exit 0
 fi
 
-
-
-# Submit monitoring job
-bsub -q $QUEUE -J "$ID-monitorer" -W $TOTAL_TIME -n 1 -R "span[hosts=1] rusage[mem=6GB]" -o "$ID-monitorer.log" "sh run_monitorer.sh $MONITORER_INPUTS"
-
 # Submit each submission type, REPEATS times
 # Outer loop over REPEATS makes different groups visible from start when monitoring
-for ((j=1; j<=REPEATS; ++j))
+for j in "${!CORES[@]}"
 do
 	# For each input string, submit the job using bsub
-	for i in "${!INPUTS[@]}"
+	for i in "${!PERTUBATIONS[@]}"
 	do
 		echo ""
-		NAME="$ID-$i-$j"
-		bsub -q $QUEUE -J $NAME -W $TIME_LIMIT -n $CORES -R "span[hosts=1] rusage[mem=6GB]" -o "$NAME.log" "sh $SCRIPT ${INPUTS[i]}"
-		# source activate ml
-		# python ../experiments/main.py ${INPUTS[i]}
-		echo "Submission : $ bsub -q $QUEUE -J $NAME -W $TIME_LIMIT -n $CORES -R "span[hosts=1] rusage[mem=6GB]" -o "$NAME.log"" # "sh $SCRIPT ${INPUTS[i]}""
-		echo "Script call: $SCRIPT ${INPUTS[i]}"
+        ID="E004-scaling-n${CORES[j]}"
+        INPUT="--id ${ID} --algorithm ES --optimizer SGD --lr-scheduler ExponentialLR --gamma 0.99970 --env-name MNIST --max-generations 100 --batch-size 1000 --safe-mutation SUM --chkpt-int 10000 --pertubations ${PERTUBATIONS[i]}"
+	    bsub -q $QUEUE -J $NAME -W $TIME_LIMIT -n ${CORES[j]} -R "span[hosts=1] rusage[mem=6GB]" -o "$NAME.log" "sh $SCRIPT $INPUT"
+		echo "Submission : $ bsub -q $QUEUE -J $NAME -W $TIME_LIMIT -n ${CORES[j]} -R "span[hosts=1] rusage[mem=6GB]" -o "$NAME.log" "
+		echo "Script call: $SCRIPT $INPUT"
 	done
 done
 echo ""

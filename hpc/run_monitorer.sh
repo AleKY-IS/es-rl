@@ -30,4 +30,4 @@ fi
 cd $HOME
 
 # Execute script
-python3 ../data-analysis/monitorer.py $INPUTS
+python3 ../data-analysis/monitor.py $INPUTS
