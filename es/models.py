@@ -1,24 +1,53 @@
+from itertools import chain, islice, tee
+
 import IPython
 import numpy as np
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 
 
-def softmax(x, dim):
-    """
-    Make-shift version of softmax that works on linux.
-    """
-    s = x.data.exp().sum()
-    x.data = x.data.exp()/s
-    return x
+def model_weight_initializer(model):
+    def current_and_next(some_iterable):
+        items, nexts = tee(some_iterable)
+        nexts = chain(islice(nexts, 1, None), [None])
+        return zip(items, nexts)
+
+    def previous_and_next(some_iterable):
+        prevs, items, nexts = tee(some_iterable, 3)
+        prevs = chain([None], prevs)
+        nexts = chain(islice(nexts, 1, None), [None])
+        return zip(prevs, items, nexts)
+    
+    for module, next_module in current_and_next(model.modules()):
+        IPython.embed()
+        try:
+            gain = nn.init.calculate_gain(next_module)
+        except:
+            continue
+        if isinstance(module, nn.Conv2d):
+            n = module.kernel_size[0] * module.kernel_size[1] * module.out_channels
+            module.weight.data.normal_(0, np.sqrt(2. / n))
+            if module.bias is not None:
+                module.bias.data.zero_()
+        elif isinstance(module, nn.BatchNorm2d):
+            module.weight.data.fill_(1)
+            module.bias.data.zero_()
+        elif isinstance(module, nn.Linear):
+            module.weight.data.normal_(0, 0.01)
+            module.bias.data.zero_()
+        
+    # IPython.embed()
+    # module_name = module.__class__.__name__
+    # gain = nn.init.calculate_gain(nonlinearity, param=None)
+    # if module_name.find('Conv') != -1:
+    #     nn.init.xavier_normal(module.weight.data, gain)
 
 
-def log_softmax(x, dim):
-    x.data = softmax(x, dim).data.log()
-    return x
-
+    # for param in args.model.parameters():
+    #     IPython.embed()
 
 def capsule_softmax(input, dim=1):
     transposed_input = input.transpose(dim, len(input.size()) - 1)
@@ -133,22 +162,50 @@ class MNISTNet(AbstractESModel):
     def __init__(self):
         super(MNISTNet, self).__init__()
         self.conv1 = nn.Conv2d(1, 10, kernel_size=(5, 5))
+        self.relu1 = nn.ReLU()
         #self.conv1_bn = nn.BatchNorm2d(10)
         self.conv2 = nn.Conv2d(10, 20, kernel_size=(5, 5))
+        self.relu2 = nn.ReLU()
         #self.conv2_bn = nn.BatchNorm2d(20)
         #self.conv2_drop = nn.Dropout2d()
         self.fc1 = nn.Linear(320, 50)
+        self.relu3 = nn.ReLU()
         self.fc2 = nn.Linear(50, 10)
+        self.lsof = nn.LogSoftmax(dim=1)
+        self._initialize_weigths()
+
+    def _initialize_weigths(self):
+        # gain = nn.init.calculate_gain('relu')
+        gain = 1
+        nn.init.xavier_normal(self.conv1.weight.data, gain=gain)
+        if self.conv1.bias is not None:
+            self.conv1.bias.data.zero_()
+        nn.init.xavier_normal(self.conv2.weight.data, gain=gain)
+        if self.conv2.bias is not None:
+            self.conv2.bias.data.zero_()
+        nn.init.xavier_normal(self.fc1.weight.data, gain=gain)
+        if self.fc1.bias is not None:
+            self.fc1.bias.data.zero_()
+        nn.init.xavier_normal(self.fc2.weight.data, gain=1)
+        if self.fc2.bias is not None:
+            self.fc2.bias.data.zero_()
 
     def forward(self, x):
-        #x = self.conv1_bn(F.relu(F.max_pool2d(self.conv1(x), 2)))
-        #x = self.conv2_drop(self.conv2_bn(F.relu(F.max_pool2d(self.conv2(x), 2))))
-        x = F.relu(F.max_pool2d(self.conv1(x), 2))
-        x = F.relu(F.max_pool2d(self.conv2(x), 2))
+        x = self.relu1(F.max_pool2d(self.conv1(x), 2))
+        x = self.relu2(F.max_pool2d(self.conv2(x), 2))
         x = x.view(-1, 320)
         #x = F.relu(F.dropout(self.fc1(x), training=self.training))
-        x = F.relu(self.fc1(x))
-        x = F.log_softmax(self.fc2(x), dim=1)
+        x = self.relu3(self.fc1(x))
+        x = self.lsof(self.fc2(x))
+
+        # #x = self.conv1_bn(F.relu(F.max_pool2d(self.conv1(x), 2)))
+        # #x = self.conv2_drop(self.conv2_bn(F.relu(F.max_pool2d(self.conv2(x), 2))))
+        # x = F.relu(F.max_pool2d(self.conv1(x), 2))
+        # x = F.relu(F.max_pool2d(self.conv2(x), 2))
+        # x = x.view(-1, 320)
+        # #x = F.relu(F.dropout(self.fc1(x), training=self.training))
+        # x = F.relu(self.fc1(x))
+        # x = F.log_softmax(self.fc2(x), dim=1)
         return x
 
 
