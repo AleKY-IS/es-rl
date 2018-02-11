@@ -119,7 +119,7 @@ def gym_test(model, env, max_episode_length, n_episodes, chkpt_dir=None, **kwarg
     print(s)
 
 
-def supervised_eval(model, train_loader, random_seed, silent=False, collect_inputs=False, do_cuda=False, **kwargs):
+def supervised_eval(model, train_loader, return_queue, random_seed, silent=False, collect_inputs=False, do_cuda=False, **kwargs):
     """
     Function to evaluate the fitness of a supervised model.
 
@@ -151,8 +151,7 @@ def supervised_eval(model, train_loader, random_seed, silent=False, collect_inpu
             pred = output.data.max(1, keepdim=True)[1] # get the index of the max log-probability
             correct_ratio = pred.eq(target.data.view_as(pred)).sum()/target.data.size()[0]
             print(" | Acc {:4.2f}%".format(correct_ratio*100), end="")
-    # return_queue.put(out)
-    return out
+    return_queue.put(out)
 
 
 def supervised_test(model, test_loader, cuda=False, chkpt_dir=None):
