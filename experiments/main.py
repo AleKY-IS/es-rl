@@ -101,7 +101,7 @@ def validate_inputs(args):
     This method validates the given inputs from `argparse.ArgumentParser.parse_args()`.
     """
     # Input validation
-    assert args.pertubations % 2 == 0                                   # Even number of pertubations
+    assert args.no_antithetic or args.pertubations % 2 == 0             # Even number of pertubations if using antithetic sampling
     assert not args.test or (args.test and args.restore)                # Testing requires restoring a model
     assert not args.cuda or (args.cuda and torch.cuda.is_available())   # Can only use CUDA if avaiable
 
@@ -200,9 +200,7 @@ def create_environment(args):
 
 def create_algorithm(args):
     AlgorithmClass = getattr(es.algorithms, args.algorithm)
-    # abstract_algorithm_input_dict = get_inputs_from_dict(es.algorithms.Algorithm.__init__, vars(args))
     algorithm_input_dict = get_inputs_from_dict_class(AlgorithmClass, vars(args), recursive=True)
-    # algorithm_input_dict = {**abstract_algorithm_input_dict, **algorithm_input_dict}  # second overwrites first
     args.algorithm = AlgorithmClass(**algorithm_input_dict)
 
 
