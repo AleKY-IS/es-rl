@@ -4,22 +4,23 @@ import os
 import pickle
 import platform
 
-import gym
 import IPython
 import numpy as np
+
+import gym
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from torch.autograd import Variable
-
 from context import es, utils
-from es.algorithms import ES, xNES
-from es.models import FFN, DQN, MujocoFFN, MNISTNet
-from es.eval_funs import gym_rollout, gym_test, gym_render, supervised_eval, supervised_test
+from es.algorithms import ES, NES
 from es.envs import create_atari_env
-from utils.misc import get_inputs_from_dict
+from es.eval_funs import (gym_render, gym_rollout, gym_test, supervised_eval,
+                          supervised_test)
+from es.models import DQN, FFN, MNISTNet, MujocoFFN
+from torch.autograd import Variable
 from torchvision import datasets, transforms
+from utils.misc import get_inputs_from_dict, get_inputs_from_dict_class
 
 
 # TODO: Get these from modules
@@ -57,8 +58,8 @@ def parse_inputs():
     parser.add_argument('--sigma', type=float, default=0.05, metavar='SD', help='Initial noise standard deviation')
     parser.add_argument('--optimize-sigma', action='store_true', help='Boolean to denote whether or not to optimize sigma')
     parser.add_argument('--no-antithetic', action='store_true', help='Boolean to not to use antithetic sampling')
-    parser.add_argument('--safe-mutation', type=str, default=None, choices=[None, 'ABS', 'SUM', 'SO'], help='String denoting the type of safe mutations to use')
-    parser.add_argument('--batch-size', type=int, default=200, metavar='BS', help='Batch size agent evaluation (max episode steps for RL setting rollouts)')
+    parser.add_argument('--safe-mutation', type=str, default='SUM', choices=[None, 'ABS', 'SUM', 'SO', 'R'], help='String denoting the type of safe mutations to use')
+    parser.add_argument('--batch-size', type=int, default=1000, metavar='BS', help='Batch size agent evaluation (max episode steps for RL setting rollouts)')
     parser.add_argument('--max-generations', type=int, default=7500, metavar='MG', help='Maximum number of generations')
     # Environment
     parser.add_argument('--env-name', type=str, default='MNIST', metavar='ENV', help='RL environment or dataset')
@@ -67,7 +68,7 @@ def parse_inputs():
     parser.add_argument('--model', type=str, default='MNISTNet', metavar='MOD', help='Model name in es.models')
     # Optimizer
     parser.add_argument('--optimizer', type=str, default='SGD', help='Optimizer to use')
-    parser.add_argument('--lr', type=float, default=0.001, metavar='LR', help='Optimizer learning rate')
+    parser.add_argument('--lr', type=float, default=0.02, metavar='LR', help='Optimizer learning rate')
     parser.add_argument('--momentum', type=float, default=0.9, help='Optimizer momentum')
     parser.add_argument('--nesterov', action='store_true', help='Boolean to denote if optimizer momentum is Nesterov')
     parser.add_argument('--weight-decay', type=float, default=0.001, help='Optimizer L2 norm weight decay penalty')
@@ -85,7 +86,7 @@ def parse_inputs():
     # Execution
     parser.add_argument('--chkpt-int', type=int, default=300, help='Interval in seconds for saving checkpoints')
     parser.add_argument('--test', action='store_true', help='Test the model (accuracy or env render), no training')
-    parser.add_argument('--id', type=str, default='', metavar='LAB', help='ID of the this run. Appended as folder to path as checkpoints/<ID>/ if not empty')
+    parser.add_argument('--id', type=str, default='test', metavar='ID', help='ID of the this run. Appended as folder to path as checkpoints/<ID>/ if not empty')
     parser.add_argument('--restore', type=str, default='', metavar='RES', help='Checkpoint from which to restore')
     parser.add_argument('--cuda', action='store_true', default=False, help='Enables CUDA training')
     parser.add_argument('--silent', action='store_true', help='Silence print statements during training')
@@ -199,7 +200,9 @@ def create_environment(args):
 
 def create_algorithm(args):
     AlgorithmClass = getattr(es.algorithms, args.algorithm)
-    algorithm_input_dict = get_inputs_from_dict(AlgorithmClass.__init__, vars(args))
+    # abstract_algorithm_input_dict = get_inputs_from_dict(es.algorithms.Algorithm.__init__, vars(args))
+    algorithm_input_dict = get_inputs_from_dict_class(AlgorithmClass, vars(args), recursive=True)
+    # algorithm_input_dict = {**abstract_algorithm_input_dict, **algorithm_input_dict}  # second overwrites first
     args.algorithm = AlgorithmClass(**algorithm_input_dict)
 
 
@@ -238,10 +241,10 @@ def test_model(args):
     if args.cuda:
         args.algorithm.model.cuda()
     if args.is_rl:
-        args.test_fun(args.algorithm.model, args.env, max_episode_length=args.batch_size, n_episodes=100)
+        args.test_fun(args.algorithm.model, args.env, max_episode_length=args.batch_size, n_episodes=100, chkpt_dir=args.chkpt_dir)
         args.rend_fun(args.algorithm.model, args.env, max_episode_length=args.batch_size)
     else:
-        args.test_fun(args.algorithm.model, args.env, cuda=args.cuda)
+        args.test_fun(args.algorithm.model, args.env, cuda=args.cuda, chkpt_dir=args.chkpt_dir)
         #args.rend_fun(args.algorithm.mode, args.env, max_episode_length=args.batch_size)
 
 
