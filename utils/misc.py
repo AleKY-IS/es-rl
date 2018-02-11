@@ -84,6 +84,29 @@ def length_of_longest(l):
     return max([len(l)] + [len(subl) for subl in l if isinstance(subl, list)] + [length_of_longest(subl) for subl in l])
 
 
+def get_inputs_from_dict_class(c, d, recursive=False):
+    """
+    The same as `get_inputs_from_dict` but for classes that may have parenting classes.
+
+    If `recursive` is `True`, the function gets the input of the `__init__` method of 
+    the class and every parenting class which is in `d`.
+    """
+    if not recursive:
+        input_dict = get_inputs_from_dict(c.__init__, d)
+    else:
+        input_dict = {}
+        if type(c) is not tuple:
+            c = (c,)
+        # Get inputs for each given class
+        for ci in c:
+            input_dict = {**input_dict, **get_inputs_from_dict(ci.__init__, d)}
+            # Call self on each of the classes' parenting classes
+            for parent_c in ci.__bases__:
+                input_dict = {**input_dict, **get_inputs_from_dict(parent_c.__init__, d)}
+    return input_dict
+        
+
+
 def get_inputs_from_dict(method, d):
     """
     Get a dictionary of the variables in the `NameSpace`, `d`, that match
