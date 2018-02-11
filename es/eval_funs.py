@@ -1,3 +1,4 @@
+import os
 import time
 
 import IPython
@@ -80,7 +81,7 @@ def gym_render(model, env, max_episode_length):
         print("\nEnded test session by keyboard interrupt")
 
 
-def gym_test(model, env, max_episode_length, n_episodes, **kwargs):
+def gym_test(model, env, max_episode_length, n_episodes, chkpt_dir=None, **kwargs):
     """
     Tests the learned model on the environment.
     """
@@ -106,13 +107,19 @@ def gym_test(model, env, max_episode_length, n_episodes, **kwargs):
     
     mean = np.mean(returns)  # Mean return
     sem = st.sem(returns)    # Standard error of mean
+    s = ''
     for conf in [0.9, 0.95, 0.975, 0.99]:
         interval = st.norm.interval(conf, loc=mean, scale=sem)
         half_width = (interval[1] - interval[0])/2
-        print("{:2d}% CI = {:5.2f} +/- {:<5.2f},  [{:>5.2f}, {:<5.2f}]".format(int(conf*100), mean, half_width, interval[0], interval[1]))
+        s += "{:2d}% CI = {:5.2f} +/- {:<5.2f},  [{:>5.2f}, {:<5.2f}]\n".format(int(conf*100), mean, half_width, interval[0], interval[1])
+    if chkpt_dir is not None:
+        with open(os.path.join(chkpt_dir, 'test.log'), 'w') as f:
+            f.write("Confidence intervals computed on " + str(n_episodes) + " episodes.")
+            f.write(s)
+    print(s)
 
 
-def supervised_eval(model, train_loader, return_queue, random_seed, silent=False, collect_inputs=False, do_cuda=False, **kwargs):
+def supervised_eval(model, train_loader, random_seed, silent=False, collect_inputs=False, do_cuda=False, **kwargs):
     """
     Function to evaluate the fitness of a supervised model.
 
@@ -144,10 +151,11 @@ def supervised_eval(model, train_loader, return_queue, random_seed, silent=False
             pred = output.data.max(1, keepdim=True)[1] # get the index of the max log-probability
             correct_ratio = pred.eq(target.data.view_as(pred)).sum()/target.data.size()[0]
             print(" | Acc {:4.2f}%".format(correct_ratio*100), end="")
-    return_queue.put(out)
+    # return_queue.put(out)
+    return out
 
 
-def supervised_test(model, test_loader, cuda=False):
+def supervised_test(model, test_loader, cuda=False, chkpt_dir=None):
     """
     Function to test the performance of a supervised classification model
     """
@@ -168,7 +176,13 @@ def supervised_test(model, test_loader, cuda=False):
         targets.extend(target.cpu().data.numpy().flatten())
 
     test_loss /= len(test_loader.dataset)
-    print('Average loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)\n'.format(
+    s = 'Average loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)\n\n'.format(
         test_loss, correct, len(test_loader.dataset),
-        100. * correct / len(test_loader.dataset)))
-    print(confusion_matrix(targets, predictions))
+        100. * correct / len(test_loader.dataset))
+    cm = confusion_matrix(targets, predictions)
+    if chkpt_dir is not None:
+        with open(os.path.join(chkpt_dir, 'test.log'), 'w') as f:
+            f.write(s)
+            f.write(str(cm))
+    print(s)
+    print(cm)
