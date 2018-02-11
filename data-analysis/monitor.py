@@ -109,6 +109,7 @@ def create_plots(args, algorithm_states, keys_to_monitor, groups):
     n_chars = len(str(n_keys))
     f = '    {:' + str(n_chars) + 'd}/{:' + str(n_chars) + 'd} monitored keys plotted'
     for i_key, k in enumerate(keys_to_monitor):
+        
         list_of_series = [s['stats'][k] for s in algorithm_states]
         list_of_genera = [s['stats']['generations'] for s in algorithm_states]
 
@@ -124,7 +125,7 @@ def create_plots(args, algorithm_states, keys_to_monitor, groups):
         plt.savefig(os.path.join(args.monitor_dir, 'all-gen-' + k + "-median" + '.pdf'))
         plt.close()
 
-        plot.timeseries_final_distribution(list_of_series, label=k)
+        plot.timeseries_final_distribution(list_of_series, label=k, ybins=len(list_of_series)*10)
         plt.savefig(os.path.join(args.monitor_dir, 'all-final-distribution-' + k + '.pdf'))
         plt.close()
 
@@ -135,7 +136,7 @@ def create_plots(args, algorithm_states, keys_to_monitor, groups):
         list_of_longest_genera = [list_of_genera[i] for i in indices]
         groups_longest_series = groups[indices]
         plot.timeseries_median_grouped(list_of_longest_genera, list_of_longest_series, groups_longest_series, xlabel='generations', ylabel=k)
-        plt.savefig(os.path.join(args.monitor_dir, 'all-gen-' + k + '-series-grouped' + '.pdf'))
+        plt.savefig(os.path.join(args.monitor_dir, 'all-gen-' + k + '-series-mean-sd' + '.pdf'))
         plt.close()
 
         if len(unique_groups) > 1:
@@ -159,7 +160,7 @@ def create_plots(args, algorithm_states, keys_to_monitor, groups):
                 plt.savefig(os.path.join(args.monitor_dir, 'group-' + gstr + '-gen-' + k + "-median" + '.pdf'))
                 plt.close()
 
-                plot.timeseries_final_distribution(list_of_series, label=k)
+                plot.timeseries_final_distribution(list_of_series, label=k, ybins=len(list_of_series)*10)
                 plt.savefig(os.path.join(args.monitor_dir, 'group-' + gstr + '-final-distribution-' + k + '.pdf'))
                 plt.close()
 
@@ -253,7 +254,7 @@ def count_down(wait=60, count_down_started_at=None, info_interval=5):
 
 
 def get_checkpoint_directories(dir):
-    return [os.path.join(args.d, di) for di in os.listdir(args.d) if os.path.isdir(os.path.join(args.d, di)) and di != 'monitoring']
+    return [os.path.join(dir, di) for di in os.listdir(dir) if os.path.isdir(os.path.join(dir, di)) and di != 'monitoring']
 
 
 def monitor(args):
@@ -311,7 +312,10 @@ def monitor(args):
 
         # Plot
         print("Creating and saving plots...")
-        create_plots(args, algorithm_states, keys_to_monitor, groups)
+        try:
+            create_plots(args, algorithm_states, keys_to_monitor, groups)
+        except:
+            pass
 
         # Upload results to dropbox
         if args.c:
