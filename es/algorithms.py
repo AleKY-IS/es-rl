@@ -42,7 +42,7 @@ class Algorithm(object):
 
     __metaclass__ = ABCMeta
 
-    def __init__(self, model, env, optimizer, lr_scheduler, eval_fun, pertubations, batch_size, max_generations, safe_mutation, no_antithetic, chkpt_dir, chkpt_int, cuda, silent):
+    def __init__(self, model, env, optimizer, lr_scheduler, eval_fun, pertubations, batch_size, max_generations, safe_mutation, no_antithetic, n_workers=mp.cpu_count(), chkpt_dir=None, chkpt_int=600, cuda=False, silent=False):
         self.algorithm = self.__class__.__name__
         # Algorithmic attributes
         self.model = model
@@ -56,6 +56,7 @@ class Algorithm(object):
         self.batch_size = batch_size
         self.max_generations = max_generations
         # Execution attributes
+        self.n_workers = n_workers
         self.cuda = cuda
         self.silent = silent
         # Checkpoint attributes
@@ -66,7 +67,7 @@ class Algorithm(object):
         # Initialize dict for saving statistics
         stat_keys = ['generations', 'episodes', 'observations', 'walltimes',
                      'return_avg', 'return_var', 'return_max', 'return_min',
-                     'return_unp', 'unp_rank', 'lr']
+                     'return_unp', 'unp_rank', 'lr', 'workertimes']
         self.stats = {key: [] for key in stat_keys}  # dict.fromkeys(stat_keys) gives None values but want empty list
         self.stats['do_monitor'] = ['return_unp', 'lr']
 
@@ -301,8 +302,9 @@ class Algorithm(object):
         s += "Safe mutation         {:s}\n".format(safe_mutation)
         s += "Antithetic sampling   {:s}\n".format(str(not self.no_antithetic))
         s += "CUDA                  {:s}\n".format(str(self.cuda))
-        with open(os.path.join(self.chkpt_dir, 'init.log'), 'a') as f:
-            f.write(s)
+        if self.chkpt_dir is not None:
+            with open(os.path.join(self.chkpt_dir, 'init.log'), 'a') as f:
+                f.write(s)
         if not self.silent:
             print(s, end='')
 
@@ -362,6 +364,8 @@ class Algorithm(object):
             best_optimizer_stdct (dict, optional): Defaults to None. State dictionary of the associated optimizer
             best_algorithm_stdct (dict, optional): Defaults to None. State dictionary of the associated algorithm
         """
+        if self.chkpt_dir is None:
+            return
         # Save latest model and optimizer state
         torch.save(self.state_dict(exclude=True), os.path.join(self.chkpt_dir, 'state-dict-algorithm.pkl'))
         torch.save(self.model.state_dict(), os.path.join(self.chkpt_dir, 'state-dict-model.pkl'))
@@ -417,16 +421,16 @@ class Algorithm(object):
 
 
 class ES(Algorithm):
-    """Natural Evolution Strategy
+    """Simple Evolution Strategy
 
-    An algorithm based on a Natural Evolution Strategy (ES) using 
+    An algorithm based on an Evolution Strategy (ES) using 
     a Gaussian search distribution.
     The ES algorithm can be derived in the framework of Variational
     Optimization (VO).
     """
 
-    def __init__(self, model, env, optimizer, lr_scheduler, eval_fun, pertubations, batch_size, max_generations, safe_mutation, no_antithetic, sigma, optimize_sigma=False, beta=None, chkpt_dir=None, chkpt_int=300, cuda=False, silent=False):
-        super(ES, self).__init__(model, env, optimizer, lr_scheduler, eval_fun, pertubations, batch_size, max_generations, safe_mutation, no_antithetic, chkpt_dir=chkpt_dir, chkpt_int=chkpt_int, cuda=cuda, silent=silent)
+    def __init__(self, model, env, optimizer, lr_scheduler, eval_fun, pertubations, batch_size, max_generations, safe_mutation, no_antithetic, sigma, optimize_sigma=False, beta=None, **kwargs):
+        super(ES, self).__init__(model, env, optimizer, lr_scheduler, eval_fun, pertubations, batch_size, max_generations, safe_mutation, no_antithetic, **kwargs)
         self.sigma = sigma
         self.optimize_sigma = optimize_sigma
         self.stats['sigma'] = []
@@ -498,6 +502,13 @@ class ES(Algorithm):
                 assert not (p1.data == p2[0].data).all()
         return {'models': models, 'seeds': seeds}
 
+    def weight_gradient_update(self, retrn, eps):
+        return 1 / (self.pertubations * self.sigma) * (retrn * eps)
+
+    def beta_gradient_update(self, retrn, eps):
+        # return 1 / (self.pertubations * self.beta.exp()) * retrn * (eps.pow(2).sum() - 1)
+        return 1 / (2 * self.pertubations * self.sigma**2) * retrn * (eps.pow(2).sum() - 1)
+
     def compute_gradients(self, returns, random_seeds):
         """Computes the gradients of the weights of the model wrt. to the return. 
         
@@ -528,9 +539,11 @@ class ES(Algorithm):
             for layer, param in enumerate(self.model.parameters()):
                 eps = self.get_pertubation(param, cuda=self.cuda)
                 # TODO Create small gradient update method
-                weight_gradients[layer] += 1 / (self.pertubations * self.sigma**2) * (retrn * sign * eps)
+                # weight_gradients[layer] += 1 / (self.pertubations * self.sigma**2) * (retrn * sign * eps)
+                weight_gradients[layer] += self.weight_gradient_update(sign * retrn, eps)
                 if self.optimize_sigma:
-                    beta_gradient += 1 / (self.pertubations * self.beta.exp()) * retrn * (eps.pow(2).sum() - 1)
+                    # beta_gradient += 1 / (self.pertubations * self.beta.exp()) * retrn * (eps.pow(2).sum() - 1)
+                    beta_gradient += self.beta_gradient_update(retrn, eps)
 
         # Set gradients
         self.optimizer.zero_grad()
@@ -541,6 +554,36 @@ class ES(Algorithm):
         if self.optimize_sigma:
             self.beta.grad = - beta_gradient
             assert not np.isnan(self.beta.grad.data).any()
+            assert not np.isinf(self.beta.grad.data).any()
+
+    def start_jobs(self, models, seeds, return_queue):
+        processes = []
+        while models:
+            perturbed_model = models.pop()
+            seed = seeds.pop()
+            inputs = (perturbed_model, self.env, return_queue, seed)
+            p = mp.Process(target=self.eval_fun, args=inputs, kwargs={'max_episode_length': self.batch_size})
+            p.start()
+            processes.append(p)
+        assert len(seeds) == 0
+        # Evaluate the unperturbed model as well
+        inputs = (self.model.cpu(), self.env, return_queue, 'dummy_seed')
+        # TODO: Don't collect inputs during run, instead sample at start for sensitivities etc.
+        p = mp.Process(target=self.eval_fun, args=inputs, kwargs={'collect_inputs': 1000, 'max_episode_length': self.batch_size})
+        p.start()
+        processes.append(p)
+        return processes, return_queue
+
+    def get_job_outputs(self, processes, return_queue):
+        raw_output = []
+        while processes:
+            # Update live processes
+            processes = [p for p in processes if p.is_alive()]
+            while not return_queue.empty():
+                raw_output.append(return_queue.get(False))
+        for p in processes:
+            p.join()
+        return raw_output
 
     def train(self):
         # Initialize
@@ -561,20 +604,22 @@ class ES(Algorithm):
             start_generation = self.stats['generations'][-1] + 1
             max_unperturbed_return = np.max(self.stats['return_unp'])
         # Initialize variables independent of state
-        return_queue = mp.Queue()
+        # pool = mp.Pool(processes=self.n_workers)
         best_model_stdct = None
         best_optimizer_stdct = None
         last_checkpoint_time = time.time()
 
         # Evaluate parent model
+        # TODO: This can be removed if we sample observations instead 
+        return_queue = mp.Queue()
         self.eval_fun(self.model.cpu(), self.env, return_queue, 'dummy_seed', collect_inputs=1000, max_episode_length=self.batch_size)
         unperturbed_out = return_queue.get()
+        
         # Start training loop
         for n_generation in range(start_generation, self.max_generations):
             # Empty list of processes, seeds and models and return queue
             loop_start_time = time.time()
             processes, seeds, models = [], [], []
-            return_queue = mp.Queue()
 
             # Compute parent model weight-output sensitivities
             self.compute_sensitivities(unperturbed_out['inputs'])
@@ -587,36 +632,16 @@ class ES(Algorithm):
                 seeds.extend(out['seeds'])
                 models.extend(out['models'])
             assert len(seeds) == len(models) and len(models) == self.pertubations
-
+            
             # Add all peturbed models to the queue
-            # TODO Move to abstract class as method (e.g. start_jobs(inputs) where inputs is a list of tuples like below)
-            # TODO self.start_jobs(models, seeds, return_queue)
             workers_start_time = time.time()
-            while models:
-                perturbed_model = models.pop()
-                seed = seeds.pop()
-                inputs = (perturbed_model, self.env, return_queue, seed)
-                p = mp.Process(target=self.eval_fun, args=inputs, kwargs={'max_episode_length': self.batch_size})
-                p.start()
-                processes.append(p)
-            assert len(seeds) == 0
-            # Evaluate the unperturbed model as well
-            inputs = (self.model.cpu(), self.env, return_queue, 'dummy_seed')
-            p = mp.Process(target=self.eval_fun, args=inputs, kwargs={'collect_inputs': 1000, 'max_episode_length': self.batch_size})
-            p.start()
-            processes.append(p)
-
+            processes, return_queue = self.start_jobs(models, seeds, mp.Queue())
             # Get output from processes until all are terminated and join
-            # TODO out = self.get_job_outputs(processes)
-            raw_output = []
-            while processes:
-                # Update live processes
-                processes = [p for p in processes if p.is_alive()]
-                while not return_queue.empty():
-                    raw_output.append(return_queue.get(False))
-            for p in processes:
-                p.join()
+            raw_output = self.get_job_outputs(processes, return_queue)
             workers_end_time = time.time()
+
+            # inputs = [(model, self.env, seed) for model, seed in zip(models, seeds)]
+            # out = pool.starmap(self.eval_fun, inputs)
 
             # SINGLE THREADED
             # for i in range(self.pertubations):
@@ -629,13 +654,14 @@ class ES(Algorithm):
             
             # IPython.embed()
             
-            # seeds = [out['seed'] for out in raw_output]
+            # 
 
             # if 'dummy_seed' not in seeds:
             #     IPython.embed()
 
             # Split into parts
             # TODO This is all a bit ugly. Can't we do something about this?
+            seeds = [out['seed'] for out in raw_output]
             returns = [out['return'] for out in raw_output]
             i_observations = [out['n_observations'] for out in raw_output]
             # Get results of unperturbed model
@@ -674,12 +700,12 @@ class ES(Algorithm):
             n_episodes += len(returns)
             n_observations += sum(i_observations)
             # Store statistics
-            # TODO self.store_stats()
+            # TODO self.store_stats(n_generation, n_episodes, n_observations, workers_end_time, workers_start_time, returns, unperturbed_out, rank)
             self.stats['generations'].append(n_generation)
             self.stats['episodes'].append(n_episodes)
             self.stats['observations'].append(n_observations)
             self.stats['walltimes'].append(time.time() - self.stats['start_time'])
-            self.stats['parallel_times'].append(workers_end_time - workers_start_time)
+            self.stats['workertimes'].append(workers_end_time - workers_start_time)
             self.stats['return_avg'].append(returns.mean())
             self.stats['return_var'].append(returns.var())
             self.stats['return_max'].append(returns.max())
@@ -696,14 +722,17 @@ class ES(Algorithm):
                 self.save_checkpoint(best_model_stdct, best_optimizer_stdct, best_algorithm_stdct)
                 last_checkpoint_time = time.time()
         
+        # End training
         self.save_checkpoint(best_model_stdct, best_optimizer_stdct, best_algorithm_stdct)
+        print("\nTraining done\n\n")
 
     def print_init(self):
         super(ES, self).print_init()
         s = "Sigma                 {:5.4f}\n".format(self.sigma)
         s += "Optimizing sigma      {:s}\n".format(str(self.optimize_sigma))
-        with open(os.path.join(self.chkpt_dir, 'init.log'), 'a') as f:
-            f.write(s + "\n\n")
+        if self.chkpt_dir is not None:
+            with open(os.path.join(self.chkpt_dir, 'init.log'), 'a') as f:
+                f.write(s + "\n\n")
         s += "\n=================== Running ===================\n"
         print(s)
 
@@ -713,13 +742,17 @@ class ES(Algorithm):
         print(s, end='')
 
 
-class xNES(Algorithm):
-    def __init__(self):
-        raise NotImplementedError
+class NES(ES):
+    def __init__(self, model, env, optimizer, lr_scheduler, eval_fun, pertubations, batch_size, max_generations, safe_mutation, no_antithetic, sigma, optimize_sigma=False, beta=None, chkpt_dir=None, chkpt_int=300, cuda=False, silent=False):
+        super(NES, self).__init__(model, env, optimizer, lr_scheduler, eval_fun, pertubations, batch_size, max_generations, safe_mutation, no_antithetic, sigma, optimize_sigma=optimize_sigma, beta=beta, chkpt_dir=chkpt_dir, chkpt_int=chkpt_int, cuda=cuda, silent=silent)
 
-    def perturb_model(self):
-        return ES.perturb_model(self)
+    def weight_gradient_update(self, retrn, eps):
+        return self.sigma / self.pertubations * (retrn * eps)
 
+    def beta_gradient_update(self, retrn, eps):
+        # return 1 / (self.pertubations * self.beta.exp()) * retrn * (eps.pow(2).sum() - 1)
+        return self.sigma**2 / self.pertubations * retrn * (eps.pow(2).sum() - 1)
+        
 # def generate_seeds_and_models(args, parent_model, self.env):
 #     """
 #     Returns a seed and 2 perturbed models
