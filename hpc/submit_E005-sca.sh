@@ -60,6 +60,7 @@ FOO=${TIME_LIMIT:="24:00"}
 
 
 # List of input strings to the call
+ID="E005-sca-n"
 SCRIPT="run_hpc.sh"
 REPEATS=1
 declare -a PERTUBATIONS=(1 2 4 8 16 32 64 128 256 512 1024 2048 4096 8192 16384)
@@ -72,7 +73,7 @@ for j in "${!CORES[@]}"
 do
     for i in "${!PERTUBATIONS[@]}"
     do
-        ID="E004-scaling-n${CORES[j]}"
+        ID="$ID${CORES[j]}"
         INPUT="--id ${ID} --algorithm ES --optimizer SGD --lr-scheduler ExponentialLR --gamma 0.99970 --env-name MNIST --max-generations 100 --batch-size 1000 --safe-mutation SUM --chkpt-int 10000 --pertubations ${PERTUBATIONS[i]}"
 	    echo "bsub -q $QUEUE -J $NAME -W $TIME_LIMIT -n ${CORES[j]} -R "span[hosts=1] rusage[mem=6GB]" -o "$NAME.log" "sh $SCRIPT $INPUT""
     done
