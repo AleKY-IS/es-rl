@@ -58,7 +58,7 @@ def parse_inputs():
     parser.add_argument('--sigma', type=float, default=0.05, metavar='SD', help='Initial noise standard deviation')
     parser.add_argument('--optimize-sigma', action='store_true', help='Boolean to denote whether or not to optimize sigma')
     parser.add_argument('--no-antithetic', action='store_true', help='Boolean to not to use antithetic sampling')
-    parser.add_argument('--safe-mutation', type=str, default='SUM', choices=[None, 'ABS', 'SUM', 'SO', 'R'], help='String denoting the type of safe mutations to use')
+    parser.add_argument('--safe-mutation', type=str, default='SUM', choices=['None', 'ABS', 'SUM', 'SO', 'R'], help='String denoting the type of safe mutations to use')
     parser.add_argument('--batch-size', type=int, default=1000, metavar='BS', help='Batch size agent evaluation (max episode steps for RL setting rollouts)')
     parser.add_argument('--max-generations', type=int, default=7500, metavar='MG', help='Maximum number of generations')
     # Environment
@@ -104,6 +104,9 @@ def validate_inputs(args):
     assert args.no_antithetic or args.pertubations % 2 == 0             # Even number of pertubations if using antithetic sampling
     assert not args.test or (args.test and args.restore)                # Testing requires restoring a model
     assert not args.cuda or (args.cuda and torch.cuda.is_available())   # Can only use CUDA if avaiable
+
+    if args.safe_mutation == 'None':
+        args.safe_mutation = None
 
     # Determine supervised/reinforcement learning problem
     if args.env_name in gym.envs.registry.env_specs.keys():
