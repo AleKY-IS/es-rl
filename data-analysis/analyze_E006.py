@@ -11,9 +11,6 @@ from context import utils
 from utils.misc import get_equal_dicts
 
 
-def get_checkpoint_directories(dir):
-    return [os.path.join(args.d, di) for di in os.listdir(args.d) if os.path.isdir(os.path.join(args.d, di)) and di != 'monitoring']
-
 parser = argparse.ArgumentParser(description='Monitorer')
 parser.add_argument('-d', type=str, default=None, metavar='--directory', help='The directory of checkpoints to monitor.')
 args = parser.parse_args()
