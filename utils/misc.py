@@ -162,7 +162,15 @@ def is_nearly_equal(a, b, eps=None):
         # Relative error
         return diff / np.min(np.abs(a) + np.abs(b), finfo.max) < finfo.eps
 
-    
+
+def list_of_dicts_to_dict_of_lists(ld):
+    return dict(zip(ld[0],zip(*[d.values() for d in ld])))
+
+
+def dict_of_lists_to_list_of_dicts(dl):
+    return [dict(zip(dl,t)) for t in zip(*dl.values())]
+
+
 """ 
 public static boolean nearlyEqual(float a, float b, float epsilon) {
 final float absA = Math.abs(a);
