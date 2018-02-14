@@ -1,24 +1,31 @@
 import sys
 import os
+import time
+import IPython
 
 
 class ProgressBar(object):
     def __init__(self, bar_width=None, title='', initial_progress=0, end_value=None, done_symbol='#', wait_symbol='-'):
-        if bar_width is None:
-            _, bar_width = os.popen('stty size', 'r').read().split()
         title += ": " if title != '' else ''
-        self.w = int(bar_width) - len(title) - 7  # Subtract title length and the "[] xxx%" part of printed string
         self.title = title
+        self._c = 7  # Lenth of the "[] xxx%" part of printed string
+        if bar_width is None:
+            try:
+                _, bar_width = os.popen('stty size', 'r').read().split()
+            except Exception:
+                bar_width = 10 + len(title + self._c)
+        self._w = int(bar_width) - len(self.title) - self._c  # Subtract constant parts of string length
+        assert self._w >= 0, 'Title too long, bar width too narrow or terminal window not wide enough'
+        self._b = self._w + len(self.title) + self._c  # Number of left shifts to apply at end to reset to head of line
         self.end_value = end_value
-        self.sd = done_symbol
-        self.sw = wait_symbol
-        self.start_string = self.title + "[" + self.sd * initial_progress + self.sw * (self.w - initial_progress) + "]" + chr(8) * (self.w + 1)
+        self.ds = done_symbol
+        self.ws = wait_symbol
+        self.initial_x = initial_progress
 
-    def startprogress(self):
+    def start(self):
         """Creates a progress bar `width` chars long on the console
         and moves cursor back to beginning with BS character"""
-        sys.stdout.write(self.start_string)
-        sys.stdout.flush()
+        self.progress(self.initial_x)
 
     def progress(self, x):
         """Sets progress bar to a certain percentage x if `end_value`
@@ -26,14 +33,14 @@ class ProgressBar(object):
         assert x <= 1 or self.end_value is not None and self.end_value >= x
         if self.end_value is not None:
             x = x / self.end_value
-        y = int(x * self.w)                      
-        sys.stdout.write(self.title + "[" + self.sd * y + self.sw * (self.w - y) + "] {:3d}%".format(int(round(x * 100))) + chr(8) * (self.w + 1))
+        y = int(x * self._w)                      
+        sys.stdout.write(self.title + "[" + self.ds * y + self.ws * (self._w - y) + "] {:3d}%".format(int(round(x * 100))) + chr(8) * (self._w + len(self.title) + self._c))
         sys.stdout.flush()
 
-    def endprogress(self):
+    def end(self):
         """End of progress bar.
         Write full bar, then move to next line"""
-        sys.stdout.write(self.title + "[" + self.sd * self.w + "] {:3d}%".format(100) + "\n")
+        sys.stdout.write(self.title + "[" + self.ds * self._w + "] {:3d}%".format(100) + "\n")
         sys.stdout.flush()
 
 
@@ -73,3 +80,17 @@ def progressBar(value, endvalue, bar_length=20):
 
     sys.stdout.write("\rPercent: [{0}] {1}%".format(arrow + spaces, int(round(percent * 100))))
     sys.stdout.flush()
+
+# Testing
+if __name__ == '__main__':
+    sleep = 0.12
+    pb = ProgressBar(title='Test: 20s with 4s elapsed and some other stuff', initial_progress=4, end_value=100)
+    pb.start()
+    time.sleep(sleep)
+    for i in range(5, 100):
+        pb.progress(i)
+        time.sleep(sleep)
+    pb.end()
+
+    IPython.embed()
+    
