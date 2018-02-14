@@ -1,5 +1,7 @@
 import inspect
 import itertools
+import collections
+import sys
 
 import IPython
 import numpy as np
@@ -171,20 +173,42 @@ def dict_of_lists_to_list_of_dicts(dl):
     return [dict(zip(dl,t)) for t in zip(*dl.values())]
 
 
-""" 
-public static boolean nearlyEqual(float a, float b, float epsilon) {
-final float absA = Math.abs(a);
-final float absB = Math.abs(b);
-final float diff = Math.abs(a - b);
+def total_size(o, handlers={}, verbose=False):
+    """ Returns the approximate memory footprint an object and all of its contents.
 
-if (a == b) { // shortcut, handles infinities
-    return true;
-} else if (a == 0 || b == 0 || diff < Float.MIN_NORMAL) {
-    // a or b is zero or both are extremely close to it
-    // relative error is less meaningful here
-    return diff < (epsilon * Float.MIN_NORMAL);
-} else { // use relative error
-    return diff / Math.min((absA + absB), Float.MAX_VALUE) < epsilon;
-}
-}
-"""
+    Automatically finds the contents of the following builtin containers and
+    their subclasses:  tuple, list, deque, dict, set and frozenset.
+    To search other containers, add handlers to iterate over their contents:
+
+        handlers = {SomeContainerClass: iter,
+                    OtherContainerClass: OtherContainerClass.get_elements}
+
+    """
+    dict_handler = lambda d: itertools.chain.from_iterable(d.items())
+    all_handlers = {tuple: iter,
+                    list: iter,
+                    collections.deque: iter,
+                    dict: dict_handler,
+                    set: iter,
+                    frozenset: iter,
+                   }
+    all_handlers.update(handlers)     # user handlers take precedence
+    seen = set()                      # track which object id's have already been seen
+    default_size = sys.getsizeof(0)       # estimate sizeof object without __sizeof__
+
+    def sizeof(o):
+        if id(o) in seen:       # do not double count the same object
+            return 0
+        seen.add(id(o))
+        s = sys.getsizeof(o, default_size)
+
+        if verbose:
+            print(s, type(o), repr(o), file=sys.stderr)
+
+        for typ, handler in all_handlers.items():
+            if isinstance(o, typ):
+                s += sum(map(sizeof, handler(o)))
+                break
+        return s
+
+    return sizeof(o)
