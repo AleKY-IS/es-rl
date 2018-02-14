@@ -11,7 +11,7 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 
 
-def gym_rollout(model, env, return_queue, random_seed, silent=False, collect_inputs=False, do_cuda=False, max_episode_length=int(1e6), **kwargs):
+def gym_rollout(model, env, random_seed, silent=False, collect_inputs=False, do_cuda=False, max_episode_length=int(1e6), **kwargs):
     """
     Function to do rollouts of a policy defined by `model` in given environment
     """
@@ -44,12 +44,12 @@ def gym_rollout(model, env, return_queue, random_seed, silent=False, collect_inp
         n_observations += 1
         # Cast state
         state = Variable(torch.from_numpy(state).float(), requires_grad=True).unsqueeze(0)
-    out = {'seed': random_seed, 'return': retrn, 'n_observations': n_observations}
+    out = {'seed': random_seed, 'return': retrn, 'observations': n_observations}
     if collect_inputs:
         if n_observations < collect_inputs:
             inputs = inputs[:n_observations,]
         out['inputs'] = inputs.numpy()
-    return_queue.put(out)
+    return out
 
 
 def gym_render(model, env, max_episode_length):
@@ -119,7 +119,7 @@ def gym_test(model, env, max_episode_length, n_episodes, chkpt_dir=None, **kwarg
     print(s)
 
 
-def supervised_eval(model, train_loader, return_queue, random_seed, silent=False, collect_inputs=False, do_cuda=False, **kwargs):
+def supervised_eval(model, train_loader, random_seed, silent=False, collect_inputs=False, do_cuda=False, **kwargs):
     """
     Function to evaluate the fitness of a supervised model.
 
@@ -135,7 +135,9 @@ def supervised_eval(model, train_loader, return_queue, random_seed, silent=False
     if do_cuda:
         retrn = retrn.cpu()
     retrn = retrn.data.numpy()[0]
-    out = {'seed': random_seed, 'return': retrn, 'n_observations': data.data.size()[0]}
+    pred = output.data.max(1, keepdim=True)[1]  # get the index of the max log-probability
+    accuracy = pred.eq(target.data.view_as(pred)).sum()/target.data.size()[0]
+    out = {'seed': random_seed, 'return': retrn, 'observations': data.data.size()[0], 'accuracy': accuracy}
     if collect_inputs:
         # NOTE It is necessary to convert the torch.autograd.Variable to numpy array 
         # in order to correctly transfer this data from the worker thread to the main thread.
@@ -147,11 +149,7 @@ def supervised_eval(model, train_loader, return_queue, random_seed, silent=False
         #   3. The background process sends the file descriptor via the unix socket.
         out['inputs'] = data.data.numpy()
         # Also print correct prediction ratio
-        if not silent:
-            pred = output.data.max(1, keepdim=True)[1] # get the index of the max log-probability
-            correct_ratio = pred.eq(target.data.view_as(pred)).sum()/target.data.size()[0]
-            print(" | Acc {:4.2f}%".format(correct_ratio*100), end="")
-    return_queue.put(out)
+    return out
 
 
 def supervised_test(model, test_loader, cuda=False, chkpt_dir=None):
