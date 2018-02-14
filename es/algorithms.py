@@ -55,7 +55,7 @@ class Algorithm(object):
         self.eval_fun = eval_fun
         self.safe_mutation = safe_mutation
         self.no_antithetic = no_antithetic
-        self.pertubations = pertubations
+        self.perturbations = pertubations
         self.batch_size = batch_size
         self.max_generations = max_generations
         # Execution attributes
@@ -315,7 +315,7 @@ class Algorithm(object):
         s += "\n================== ALGORITHM ==================\n"
         s += "Algorithm             {:s}\n".format(self.__class__.__name__)
         s += "Environment           {:s}\n".format(env_name)
-        s += "Pertubations          {:d}\n".format(self.pertubations)
+        s += "Pertubations          {:d}\n".format(self.perturbations)
         s += "Generations           {:d}\n".format(self.max_generations)
         s += "Batch size            {:<5d}\n".format(self.batch_size)
         s += "Safe mutation         {:s}\n".format(safe_mutation)
@@ -336,8 +336,8 @@ class Algorithm(object):
         lr = self.stats['lr'][-1] if type(self.stats['lr'][-1]) is not list else self.stats['lr'][-1][0]
         try:
             G = 'G {0:' + str(len(str(self.max_generations))) + 'd}'
-            # O = 'O {1:' + str(len(str(self.batch_size * self.max_generations * self.pertubations))) + 'd}'
-            R = 'R {5:' + str(len(str(self.pertubations))) + 'd}'
+            # O = 'O {1:' + str(len(str(self.batch_size * self.max_generations * self.perturbations))) + 'd}'
+            R = 'R {5:' + str(len(str(self.perturbations))) + 'd}'
             s = G + " | F {1:6.2f} | A {2:6.2f} | Ma {3:6.2f} | Mi {4:6.2f} | " + R + " | L {6:5.4f}"
             s = s.format(self.stats['generations'][-1], self.stats['return_unp'][-1],
                          self.stats['return_avg'][-1],  self.stats['return_max'][-1],
@@ -497,7 +497,7 @@ class ES(Algorithm):
         perturbed_model.zero_grad()
         # Handle antithetic sampling
         sign = np.sign(random_seed)
-        random_seed = abs(random_seed)
+        random_seed = float(abs(random_seed))
         # Set seed and permute by isotropic Gaussian noise
         torch.manual_seed(random_seed)
         torch.cuda.manual_seed(random_seed)
@@ -506,14 +506,14 @@ class ES(Algorithm):
             pp.data += sign * self.sigma * eps
             assert not np.isnan(pp.data).any()
             assert not np.isinf(pp.data).any()
-        return perturbed_model
+        return perturbed_model, float(random_seed)
 
     def weight_gradient_update(self, retrn, eps):
-        return 1 / (self.pertubations * self.sigma) * (retrn * eps)
+        return 1 / (self.perturbations * self.sigma) * (retrn * eps)
 
     def beta_gradient_update(self, retrn, eps):
-        # return 1 / (self.pertubations * self.beta.exp()) * retrn * (eps.pow(2).sum() - 1)
-        return 1 / (2 * self.pertubations * self.sigma**2) * retrn * (eps.pow(2).sum() - 1)
+        # return 1 / (self.perturbations * self.beta.exp()) * retrn * (eps.pow(2).sum() - 1)
+        return 1 / (2 * self.perturbations * self.sigma**2) * retrn * (eps.pow(2).sum() - 1)
 
     def compute_gradients(self, returns, random_seeds):
         """Computes the gradients of the weights of the model wrt. to the return. 
@@ -523,7 +523,7 @@ class ES(Algorithm):
         """
         # Verify input
         n_returns = len(returns)
-        assert n_returns == self.pertubations
+        assert n_returns == self.perturbations
         assert len(random_seeds) == n_returns
 
         # CUDA
@@ -545,10 +545,10 @@ class ES(Algorithm):
             for layer, param in enumerate(self.model.parameters()):
                 eps = self.get_pertubation(param, sensitivity=self.sensitivities[layer], cuda=self.cuda)
                 # TODO Create small gradient update method
-                # weight_gradients[layer] += 1 / (self.pertubations * self.sigma**2) * (retrn * sign * eps)
+                # weight_gradients[layer] += 1 / (self.perturbations * self.sigma**2) * (retrn * sign * eps)
                 weight_gradients[layer] += self.weight_gradient_update(sign * retrn, eps)
                 if self.optimize_sigma:
-                    # beta_gradient += 1 / (self.pertubations * self.beta.exp()) * retrn * (eps.pow(2).sum() - 1)
+                    # beta_gradient += 1 / (self.perturbations * self.beta.exp()) * retrn * (eps.pow(2).sum() - 1)
                     beta_gradient += self.beta_gradient_update(retrn, eps)
 
         # Set gradients
@@ -595,12 +595,9 @@ class ES(Algorithm):
             self.compute_sensitivities(unperturbed_out['inputs'])
 
             # Generate random seeds
-            # TODO: Do this more efficiently
-            seeds = []
-            while len(seeds) < self.pertubations:
-                random_seed = np.random.randint(2**30)
-                seeds += [random_seed] if self.no_antithetic else [random_seed, -random_seed]
-            assert len(seeds) == self.pertubations
+            seeds = torch.rand(int(self.perturbations/((not self.no_antithetic) + 1))).long()
+            if not self.no_antithetic: seeds = torch.cat([seeds, -seeds])
+            assert len(seeds) == self.perturbations
 
             # Execute all pertubations on the pool of processes
             workers_start_time = time.time()
@@ -639,7 +636,7 @@ class ES(Algorithm):
 
             # Update iter variables
             # Store statistics
-            # TODO self.store_stats(n_generation, n_episodes, n_observations, workers_end_time, workers_start_time, returns, unperturbed_out, rank)
+            # TODO self.store_stats(workers_out, unperturbed_out, n_generation, workers_end_time, workers_start_time, rank)
             self.stats['generations'].append(n_generation)
             self.stats['walltimes'].append(time.time() - self.stats['start_time'])
             self.stats['workertimes'].append(workers_end_time - workers_start_time)
@@ -662,11 +659,6 @@ class ES(Algorithm):
                         self.stats[k + '_var'].append(np.var(v))
                         self.stats[k + '_sum'].append(np.sum(v))
                         self.stats[k + '_unp'].append(unperturbed_out[k])
-            # self.stats['return_avg'].append(returns.mean())
-            # self.stats['return_var'].append(returns.var())
-            # self.stats['return_max'].append(returns.max())
-            # self.stats['return_min'].append(returns.min())
-            # self.stats['return_unp'].append(unperturbed_out['return'])
 
             # Print and checkpoint
             self.print_iter()
@@ -702,11 +694,11 @@ class NES(ES):
         super(NES, self).__init__(model, env, optimizer, lr_scheduler, eval_fun, pertubations, batch_size, max_generations, safe_mutation, no_antithetic, sigma, optimize_sigma=optimize_sigma, beta=beta, chkpt_dir=chkpt_dir, chkpt_int=chkpt_int, cuda=cuda, silent=silent)
 
     def weight_gradient_update(self, retrn, eps):
-        return self.sigma / self.pertubations * (retrn * eps)
+        return self.sigma / self.perturbations * (retrn * eps)
 
     def beta_gradient_update(self, retrn, eps):
-        # return 1 / (self.pertubations * self.beta.exp()) * retrn * (eps.pow(2).sum() - 1)
-        return self.sigma**2 / self.pertubations * retrn * (eps.pow(2).sum() - 1)
+        # return 1 / (self.perturbations * self.beta.exp()) * retrn * (eps.pow(2).sum() - 1)
+        return self.sigma**2 / self.perturbations * retrn * (eps.pow(2).sum() - 1)
 
 
 
