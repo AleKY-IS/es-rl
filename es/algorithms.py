@@ -137,38 +137,6 @@ class Algorithm(object):
             u[sorted_indices[k]] = np.max([0, np.log(n / 2 + 1) - np.log(k + 1)])
         return u / np.sum(u) - 1 / n
 
-    def start_jobs(self, models, seeds, return_queue):
-        processes = []
-        while models:
-            perturbed_model = models.pop()
-            seed = seeds.pop()
-            inputs = (perturbed_model, self.env, return_queue, seed)
-            try:
-                p = mp.Process(target=self.eval_fun, args=inputs, kwargs={'max_episode_length': self.batch_size})
-                p.start()
-                processes.append(p)
-            except (RuntimeError, BlockingIOError) as E:
-                IPython.embed()
-        assert len(seeds) == 0
-        # Evaluate the unperturbed model as well
-        inputs = (self.model.cpu(), self.env, return_queue, 'dummy_seed')
-        # TODO: Don't collect inputs during run, instead sample at start for sensitivities etc.
-        p = mp.Process(target=self.eval_fun, args=inputs, kwargs={'collect_inputs': 1000, 'max_episode_length': self.batch_size})
-        p.start()
-        processes.append(p)
-        return processes, return_queue
-
-    def get_job_outputs(self, processes, return_queue):
-        raw_output = []
-        while processes:
-            # Update live processes
-            processes = [p for p in processes if p.is_alive()]
-            while not return_queue.empty():
-                raw_output.append(return_queue.get(False))
-        for p in processes:
-            p.join()
-        return raw_output
-
     def eval_wrap(self, seed, **kwargs):
         # Get a model and a copy of the environment and evaluate
         model = self.perturb_model(seed)
@@ -816,3 +784,35 @@ class NES(ES):
 #             assert not np.isinf(p2[0].data).any()
 #             assert not (p1.data == p2[0].data).all()
 #     return {'models': models, 'seeds': seeds}
+
+# def start_jobs(self, models, seeds, return_queue):
+#     processes = []
+#     while models:
+#         perturbed_model = models.pop()
+#         seed = seeds.pop()
+#         inputs = (perturbed_model, self.env, return_queue, seed)
+#         try:
+#             p = mp.Process(target=self.eval_fun, args=inputs, kwargs={'max_episode_length': self.batch_size})
+#             p.start()
+#             processes.append(p)
+#         except (RuntimeError, BlockingIOError) as E:
+#             IPython.embed()
+#     assert len(seeds) == 0
+#     # Evaluate the unperturbed model as well
+#     inputs = (self.model.cpu(), self.env, return_queue, 'dummy_seed')
+#     # TODO: Don't collect inputs during run, instead sample at start for sensitivities etc.
+#     p = mp.Process(target=self.eval_fun, args=inputs, kwargs={'collect_inputs': 1000, 'max_episode_length': self.batch_size})
+#     p.start()
+#     processes.append(p)
+#     return processes, return_queue
+
+# def get_job_outputs(self, processes, return_queue):
+#     raw_output = []
+#     while processes:
+#         # Update live processes
+#         processes = [p for p in processes if p.is_alive()]
+#         while not return_queue.empty():
+#             raw_output.append(return_queue.get(False))
+#     for p in processes:
+#         p.join()
+#     return raw_output
