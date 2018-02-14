@@ -32,7 +32,7 @@ class Algorithm(object):
         env (gym): A gym environment
         optimizer (torch.optim.Optimizer): A pytorch optimizer
         lr_scheduler (torch.optim.lr_scheduler): A pytorch learning rate scheduler
-        pertubations (int): The number of perturbed models to evaluate
+        perturbations (int): The number of perturbed models to evaluate
         batch_size (int): The number of observations for an evaluate (supervised)
         max_generations (int): The maximum number of generations to train for
         safe_mutation (str): The version of safe mutations to use. Valid options are `ABS`, `SUM` and `SO`
@@ -45,7 +45,7 @@ class Algorithm(object):
 
     __metaclass__ = ABCMeta
 
-    def __init__(self, model, env, optimizer, lr_scheduler, eval_fun, pertubations, batch_size, max_generations, safe_mutation, no_antithetic, n_workers=mp.cpu_count(), chkpt_dir=None, chkpt_int=600, cuda=False, silent=False):
+    def __init__(self, model, env, optimizer, lr_scheduler, eval_fun, perturbations, batch_size, max_generations, safe_mutation, no_antithetic, n_workers=mp.cpu_count(), chkpt_dir=None, chkpt_int=600, cuda=False, silent=False):
         self.algorithm = self.__class__.__name__
         # Algorithmic attributes
         self.model = model
@@ -55,7 +55,7 @@ class Algorithm(object):
         self.eval_fun = eval_fun
         self.safe_mutation = safe_mutation
         self.no_antithetic = no_antithetic
-        self.perturbations = pertubations
+        self.perturbations = perturbations
         self.batch_size = batch_size
         self.max_generations = max_generations
         # Execution attributes
@@ -102,14 +102,14 @@ class Algorithm(object):
 
     @staticmethod
     def unperturbed_rank(returns, unperturbed_return):
-        """Computes the rank of the unperturbed model among the pertubations.
+        """Computes the rank of the unperturbed model among the perturbations.
         
         Args:
             returns (np.array): Returns of evaluated perturbed models.
             unperturbed_return (float): Return of the unperturbed model.
         
         Returns:
-            int: Rank of the unperturbed model among the pertubations
+            int: Rank of the unperturbed model among the perturbations
         """      
         return (returns > unperturbed_return).sum() + 1
 
@@ -144,7 +144,7 @@ class Algorithm(object):
     def get_pertubation(self, param, sensitivity=None, cuda=False):
         """This method computes a pertubation of a given pytorch parameter.
 
-        As of now, it draws pertubations from a standard Gaussian.
+        As of now, it draws perturbations from a standard Gaussian.
         The pertubation is placed on the GPU if the parameter is there and 
         `cuda` is `True`. Safe mutations are performed if self.safe_mutation 
         is not None.
@@ -313,7 +313,7 @@ class Algorithm(object):
         s += "\n================== ALGORITHM ==================\n"
         s += "Algorithm             {:s}\n".format(self.__class__.__name__)
         s += "Environment           {:s}\n".format(env_name)
-        s += "Pertubations          {:d}\n".format(self.perturbations)
+        s += "Perturbations         {:d}\n".format(self.perturbations)
         s += "Generations           {:d}\n".format(self.max_generations)
         s += "Batch size            {:<5d}\n".format(self.batch_size)
         s += "Safe mutation         {:s}\n".format(safe_mutation)
@@ -470,8 +470,8 @@ class ES(Algorithm):
     Optimization (VO).
     """
 
-    def __init__(self, model, env, optimizer, lr_scheduler, eval_fun, pertubations, batch_size, max_generations, safe_mutation, no_antithetic, sigma, optimize_sigma=False, beta=None, **kwargs):
-        super(ES, self).__init__(model, env, optimizer, lr_scheduler, eval_fun, pertubations, batch_size, max_generations, safe_mutation, no_antithetic, **kwargs)
+    def __init__(self, model, env, optimizer, lr_scheduler, eval_fun, perturbations, batch_size, max_generations, safe_mutation, no_antithetic, sigma, optimize_sigma=False, beta=None, **kwargs):
+        super(ES, self).__init__(model, env, optimizer, lr_scheduler, eval_fun, perturbations, batch_size, max_generations, safe_mutation, no_antithetic, **kwargs)
         self.sigma = sigma
         self.optimize_sigma = optimize_sigma
         self.stats['do_monitor'].append('sigma')
@@ -604,7 +604,7 @@ class ES(Algorithm):
             max_unperturbed_return = np.max(self.stats['return_unp'])
         # Initialize variables independent of state
         pool = mp.Pool(processes=self.n_workers)
-        pb = PoolProgress(pool, update_interval=1, keep_after_done=False, title='Evaluating pertubations')
+        pb = PoolProgress(pool, update_interval=1, keep_after_done=False, title='Evaluating perturbations')
         best_model_stdct = None
         best_optimizer_stdct = None
         last_checkpoint_time = time.time()
@@ -623,7 +623,7 @@ class ES(Algorithm):
             if not self.no_antithetic: seeds = torch.cat([seeds, -seeds])
             assert len(seeds) == self.perturbations, 'Number of created seeds is not equal to wanted perturbations'
 
-            # Execute all pertubations on the pool of processes
+            # Execute all perturbations on the pool of processes
             workers_start_time = time.time()
             kwargs = {'max_episode_length': self.batch_size}
             workers_out = pool.map_async(partial(self.eval_wrap, payload=kwargs), seeds, chunksize=10)
@@ -690,8 +690,8 @@ class ES(Algorithm):
 
 
 class NES(ES):
-    def __init__(self, model, env, optimizer, lr_scheduler, eval_fun, pertubations, batch_size, max_generations, safe_mutation, no_antithetic, sigma, optimize_sigma=False, beta=None, chkpt_dir=None, chkpt_int=300, cuda=False, silent=False):
-        super(NES, self).__init__(model, env, optimizer, lr_scheduler, eval_fun, pertubations, batch_size, max_generations, safe_mutation, no_antithetic, sigma, optimize_sigma=optimize_sigma, beta=beta, chkpt_dir=chkpt_dir, chkpt_int=chkpt_int, cuda=cuda, silent=silent)
+    def __init__(self, model, env, optimizer, lr_scheduler, eval_fun, perturbations, batch_size, max_generations, safe_mutation, no_antithetic, sigma, optimize_sigma=False, beta=None, chkpt_dir=None, chkpt_int=300, cuda=False, silent=False):
+        super(NES, self).__init__(model, env, optimizer, lr_scheduler, eval_fun, perturbations, batch_size, max_generations, safe_mutation, no_antithetic, sigma, optimize_sigma=optimize_sigma, beta=beta, chkpt_dir=chkpt_dir, chkpt_int=chkpt_int, cuda=cuda, silent=silent)
 
     def weight_gradient_update(self, retrn, eps):
         return self.sigma / self.perturbations * (retrn * eps)
