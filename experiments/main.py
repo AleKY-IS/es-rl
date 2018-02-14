@@ -49,12 +49,12 @@ def parse_inputs():
         0.99977     10%
 
     MNIST SGD settings
-        --optimizer SGD --lr 0.001 --momentum 0.9 --safe-mutation SUM --sigma 0.05 --pertubations 40
+        --optimizer SGD --lr 0.001 --momentum 0.9 --safe-mutation SUM --sigma 0.05 --perturbations 40
     """
     parser = argparse.ArgumentParser(description='Experiments')
     # Algorithm
     parser.add_argument('--algorithm', type=str, default='ES', metavar='ALG', help='Model name in es.models')
-    parser.add_argument('--pertubations', type=int, default=40, metavar='N', help='Number of perturbed models to make; must be even')
+    parser.add_argument('--perturbations', type=int, default=40, metavar='N', help='Number of perturbed models to make; must be even')
     parser.add_argument('--sigma', type=float, default=0.05, metavar='SD', help='Initial noise standard deviation')
     parser.add_argument('--optimize-sigma', action='store_true', help='Boolean to denote whether or not to optimize sigma')
     parser.add_argument('--no-antithetic', action='store_true', help='Boolean to not to use antithetic sampling')
@@ -91,7 +91,7 @@ def parse_inputs():
     parser.add_argument('--cuda', action='store_true', default=False, help='Enables CUDA training')
     parser.add_argument('--silent', action='store_true', help='Silence print statements during training')
     parser.add_argument('--do-permute-train-labels', action='store_true', help='Permute the training labels randomly')
-    parser.add_argument('--lr-from-pertubations', type=int, default=0, help='Get the learning rate heuristically from the number of pertubations')
+    parser.add_argument('--lr-from-perturbations', type=int, default=0, help='Get the learning rate heuristically from the number of perturbations')
     args = parser.parse_args()
     return args
 
@@ -101,7 +101,7 @@ def validate_inputs(args):
     This method validates the given inputs from `argparse.ArgumentParser.parse_args()`.
     """
     # Input validation
-    assert args.no_antithetic or args.pertubations % 2 == 0             # Even number of pertubations if using antithetic sampling
+    assert args.no_antithetic or args.perturbations % 2 == 0             # Even number of perturbations if using antithetic sampling
     assert not args.test or (args.test and args.restore)                # Testing requires restoring a model
     assert not args.cuda or (args.cuda and torch.cuda.is_available())   # Can only use CUDA if avaiable
 
@@ -225,16 +225,16 @@ def get_eval_funs(args):
         args.test_fun = supervised_test
 
 
-def get_lr_from_pertubations(args):
-    # Problem dimension from pertubations
+def get_lr_from_perturbations(args):
+    # Problem dimension from perturbations
     ##IPython.embed()
-    d = np.exp((args.pertubations-4)/3)
-    if args.lr_from_pertubations == 1:
+    d = np.exp((args.perturbations-4)/3)
+    if args.lr_from_perturbations == 1:
         args.lr = (9 + 3 * np.log(d))/(5*d**(3/2))
-    elif args.lr_from_pertubations == 2:
+    elif args.lr_from_perturbations == 2:
         #args.lr = (3 + np.log(d))/(5*d**(1/2))
         args.lr = (3 + np.log(d))/(30*d**(1/2))
-    elif args.lr_from_pertubations == 3:
+    elif args.lr_from_perturbations == 3:
         args.lr = d**(1/2)/5*(3 + np.log(d))
     return args
 
@@ -255,8 +255,8 @@ if __name__ == '__main__':
     validate_inputs(args)
     args.file_path = os.path.split(os.path.realpath(__file__))[0]
     # Get hyper parameters
-    if args.lr_from_pertubations:
-        args = get_lr_from_pertubations(args)
+    if args.lr_from_perturbations:
+        args = get_lr_from_perturbations(args)
     # Create environment, model, optimizer and learning rate scheduler
     create_environment(args)
     create_model(args)
