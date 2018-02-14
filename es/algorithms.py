@@ -6,7 +6,11 @@ import platform
 import pprint
 import queue
 import time
+from itertools import zip_longest
 from abc import ABCMeta, abstractmethod
+from functools import partial
+import copy
+from utils.progress import PoolProgress
 
 import IPython
 import numpy as np
@@ -14,11 +18,10 @@ import numpy as np
 import gym
 import torch
 import torch.multiprocessing as mp
-from torch.autograd import Variable
-
 from context import utils
-from utils.plotting import plot_stats
+from torch.autograd import Variable
 from utils.misc import get_inputs_from_dict
+from utils.plotting import plot_stats
 
 
 class Algorithm(object):
@@ -62,6 +65,8 @@ class Algorithm(object):
         # Checkpoint attributes
         self.chkpt_dir = chkpt_dir
         self.chkpt_int = chkpt_int
+        # Safe mutation sensitivities
+        self.sensitivities = [None]
         # Attributes to exclude from the state dictionary
         self.exclude_from_state_dict = {'env', 'optimizer', 'lr_scheduler', 'model'}
         # Initialize dict for saving statistics
@@ -123,6 +128,8 @@ class Algorithm(object):
         Returns:
             np.array: Shaped returns
         """
+        if type(returns) is list:
+            returns = np.array(returns)
         n = len(returns)
         sorted_indices = np.argsort(-returns)
         u = np.zeros(n)
@@ -130,7 +137,45 @@ class Algorithm(object):
             u[sorted_indices[k]] = np.max([0, np.log(n / 2 + 1) - np.log(k + 1)])
         return u / np.sum(u) - 1 / n
 
-    def get_pertubation(self, param, cuda=False):
+    def start_jobs(self, models, seeds, return_queue):
+        processes = []
+        while models:
+            perturbed_model = models.pop()
+            seed = seeds.pop()
+            inputs = (perturbed_model, self.env, return_queue, seed)
+            try:
+                p = mp.Process(target=self.eval_fun, args=inputs, kwargs={'max_episode_length': self.batch_size})
+                p.start()
+                processes.append(p)
+            except (RuntimeError, BlockingIOError) as E:
+                IPython.embed()
+        assert len(seeds) == 0
+        # Evaluate the unperturbed model as well
+        inputs = (self.model.cpu(), self.env, return_queue, 'dummy_seed')
+        # TODO: Don't collect inputs during run, instead sample at start for sensitivities etc.
+        p = mp.Process(target=self.eval_fun, args=inputs, kwargs={'collect_inputs': 1000, 'max_episode_length': self.batch_size})
+        p.start()
+        processes.append(p)
+        return processes, return_queue
+
+    def get_job_outputs(self, processes, return_queue):
+        raw_output = []
+        while processes:
+            # Update live processes
+            processes = [p for p in processes if p.is_alive()]
+            while not return_queue.empty():
+                raw_output.append(return_queue.get(False))
+        for p in processes:
+            p.join()
+        return raw_output
+
+    def eval_wrap(self, seed, **kwargs):
+        # Get a model and a copy of the environment and evaluate
+        model = self.perturb_model(seed)
+        env = copy.deepcopy(self.env)
+        return self.eval_fun(model, env, seed, **kwargs)
+
+    def get_pertubation(self, param, sensitivity=None, cuda=False):
         """This method computes a pertubation of a given pytorch parameter.
 
         As of now, it draws pertubations from a standard Gaussian.
@@ -146,7 +191,8 @@ class Algorithm(object):
         eps.normal_(mean=0, std=1)
         # Scale by sensitivities if using safe mutations
         if self.safe_mutation is not None:
-            eps = eps / param.grad.data   # Scale by sensitivities
+            assert sensitivity is not None
+            eps = eps / sensitivity       # Scale by sensitivities
             eps = eps / eps.std()         # Rescale to unit variance
         return eps
 
@@ -183,7 +229,7 @@ class Algorithm(object):
         # Compute sensitivities using specified method
         if self.safe_mutation is None:
             # Skip if not required but activate gradients in model first
-            outputs.backward(t)
+            # outputs.backward(t)
             return
         elif self.safe_mutation == 'ABS':
             sensitivities = self._compute_sensitivities_abs(outputs, t)
@@ -213,11 +259,16 @@ class Algorithm(object):
                 sensitivities[pid][sensitivities[pid] > 1e5] = 1e5
         
         # Set sensitivities and assert their values
-        self.model.zero_grad()
-        for pid, param in enumerate(self.model.parameters()):
-            param.grad.data = sensitivities[pid].clone()
-            assert not np.isnan(param.grad.data).any()
-            assert not np.isinf(param.grad.data).any()
+        for sens in sensitivities:
+            assert not np.isnan(sens).any()
+            assert not np.isinf(sens).any()
+        self.sensitivities = sensitivities
+        # return sensitivities
+        # self.model.zero_grad()
+        # for pid, param in enumerate(self.model.parameters()):
+        #     param.grad.data = sensitivities[pid].clone()
+        #     assert not np.isnan(param.grad.data).any()
+        #     assert not np.isinf(param.grad.data).any()
 
     def _compute_sensitivities_abs(self, outputs, t):
         # Backward pass for each output unit (and accumulate gradients)
@@ -302,6 +353,7 @@ class Algorithm(object):
         s += "Safe mutation         {:s}\n".format(safe_mutation)
         s += "Antithetic sampling   {:s}\n".format(str(not self.no_antithetic))
         s += "CUDA                  {:s}\n".format(str(self.cuda))
+        s += "Workers               {:d}\n".format(self.n_workers)
         if self.chkpt_dir is not None:
             with open(os.path.join(self.chkpt_dir, 'init.log'), 'a') as f:
                 f.write(s)
@@ -316,16 +368,15 @@ class Algorithm(object):
         lr = self.stats['lr'][-1] if type(self.stats['lr'][-1]) is not list else self.stats['lr'][-1][0]
         try:
             G = 'G {0:' + str(len(str(self.max_generations))) + 'd}'
-            O = 'O {1:' + str(len(str(self.batch_size * self.max_generations * self.pertubations))) + 'd}'
-            R = 'R {6:' + str(len(str(self.pertubations))) + 'd}'
-            s = "\n" + G + " | " + O + " | F {2:6.2f} | A {3:6.2f} | Ma {4:6.2f} | Mi {5:6.2f} | " + R + " | L {7:5.4f}"
-            s = s.format(self.stats['generations'][-1], self.stats['observations'][-1], 
-                         self.stats['return_unp'][-1], self.stats['return_avg'][-1], 
-                         self.stats['return_max'][-1], self.stats['return_min'][-1], 
-                         self.stats['unp_rank'][-1], lr)
+            # O = 'O {1:' + str(len(str(self.batch_size * self.max_generations * self.pertubations))) + 'd}'
+            R = 'R {5:' + str(len(str(self.pertubations))) + 'd}'
+            s = G + " | F {1:6.2f} | A {2:6.2f} | Ma {3:6.2f} | Mi {4:6.2f} | " + R + " | L {6:5.4f}"
+            s = s.format(self.stats['generations'][-1], self.stats['return_unp'][-1],
+                         self.stats['return_avg'][-1],  self.stats['return_max'][-1],
+                         self.stats['return_min'][-1],  self.stats['unp_rank'][-1], lr)
             print(s, end="")
         except Exception:
-            print('Could not print_iter. Some number too large', end="")
+            print('Could not print_iter', end="")
 
     def load_checkpoint(self, chkpt_dir, load_best=False):
         """Loads a saved checkpoint.
@@ -463,44 +514,31 @@ class ES(Algorithm):
     def perturb_model(self, random_seed):
         """Perturbs the main model.
 
-        Modifies the main model with a pertubation of its parameters,
-        as well as the mirrored perturbation, and returns both perturbed
-        models.
+        Modifies the main model with a pertubation of its parameters.
         
         Args:
             random_seed (int): Known random seed. A number between 0 and 2**32.
 
         Returns:
-            dict: A dictionary with keys `models` and `seeds` storing exactly that.
+            torch.nn.module: The model
         """
-        # Antithetic or not
-        reps = 1 if self.no_antithetic else 2
-        seeds = [random_seed] if self.no_antithetic else [random_seed, -random_seed]
         # Get model class and instantiate new models as copies of parent
         model_class = type(self.model)
-        models = []
-        parameters = [self.model.parameters()]
-        for i in range(reps):
-            this_model = model_class(self.env.observation_space, self.env.action_space) if hasattr(self.env, 'observation_space') else model_class()
-            this_model.load_state_dict(self.model.state_dict())
-            this_model.zero_grad()
-            models.append(this_model)
-            parameters.append(this_model.parameters())
-        parameters = zip(*parameters)
+        perturbed_model = model_class(self.env.observation_space, self.env.action_space) if hasattr(self.env, 'observation_space') else model_class()
+        perturbed_model.load_state_dict(self.model.state_dict())
+        perturbed_model.zero_grad()
+        # Handle antithetic sampling
+        sign = np.sign(random_seed)
+        random_seed = abs(random_seed)
         # Set seed and permute by isotropic Gaussian noise
         torch.manual_seed(random_seed)
         torch.cuda.manual_seed(random_seed)
-        for pp, p1, *p2 in parameters:
-            eps = self.get_pertubation(pp)
-            p1.data += self.sigma * eps
-            assert not np.isnan(p1.data).any()
-            assert not np.isinf(p1.data).any()
-            if not self.no_antithetic:
-                p2[0].data -= self.sigma * eps
-                assert not np.isnan(p2[0].data).any()
-                assert not np.isinf(p2[0].data).any()
-                assert not (p1.data == p2[0].data).all()
-        return {'models': models, 'seeds': seeds}
+        for p, pp, sens in zip_longest(self.model.parameters(), perturbed_model.parameters(), self.sensitivities):
+            eps = self.get_pertubation(p, sensitivity=sens)
+            pp.data += sign * self.sigma * eps
+            assert not np.isnan(pp.data).any()
+            assert not np.isinf(pp.data).any()
+        return perturbed_model
 
     def weight_gradient_update(self, retrn, eps):
         return 1 / (self.pertubations * self.sigma) * (retrn * eps)
@@ -537,7 +575,7 @@ class ES(Algorithm):
             torch.manual_seed(random_seeds[i])
             torch.cuda.manual_seed(random_seeds[i])
             for layer, param in enumerate(self.model.parameters()):
-                eps = self.get_pertubation(param, cuda=self.cuda)
+                eps = self.get_pertubation(param, sensitivity=self.sensitivities[layer], cuda=self.cuda)
                 # TODO Create small gradient update method
                 # weight_gradients[layer] += 1 / (self.pertubations * self.sigma**2) * (retrn * sign * eps)
                 weight_gradients[layer] += self.weight_gradient_update(sign * retrn, eps)
@@ -556,35 +594,6 @@ class ES(Algorithm):
             assert not np.isnan(self.beta.grad.data).any()
             assert not np.isinf(self.beta.grad.data).any()
 
-    def start_jobs(self, models, seeds, return_queue):
-        processes = []
-        while models:
-            perturbed_model = models.pop()
-            seed = seeds.pop()
-            inputs = (perturbed_model, self.env, return_queue, seed)
-            p = mp.Process(target=self.eval_fun, args=inputs, kwargs={'max_episode_length': self.batch_size})
-            p.start()
-            processes.append(p)
-        assert len(seeds) == 0
-        # Evaluate the unperturbed model as well
-        inputs = (self.model.cpu(), self.env, return_queue, 'dummy_seed')
-        # TODO: Don't collect inputs during run, instead sample at start for sensitivities etc.
-        p = mp.Process(target=self.eval_fun, args=inputs, kwargs={'collect_inputs': 1000, 'max_episode_length': self.batch_size})
-        p.start()
-        processes.append(p)
-        return processes, return_queue
-
-    def get_job_outputs(self, processes, return_queue):
-        raw_output = []
-        while processes:
-            # Update live processes
-            processes = [p for p in processes if p.is_alive()]
-            while not return_queue.empty():
-                raw_output.append(return_queue.get(False))
-        for p in processes:
-            p.join()
-        return raw_output
-
     def train(self):
         # Initialize
         # TODO Maybe possible to move to abstract class either in train method or as distinct methods (e.g. init_train)
@@ -592,93 +601,57 @@ class ES(Algorithm):
         # Initialize variables dependent on restoring
         if not self.stats['episodes']:
             # If nothing stored then start from scratch
-            n_episodes = 0
-            n_observations = 0
             start_generation = 0
             max_unperturbed_return = -1e8
             self.stats['start_time'] = time.time()
         else:
             # If something stored then start from last iteration
-            n_episodes = self.stats['episodes'][-1]
-            n_observations = self.stats['observations'][-1]
+            # n_episodes = self.stats['episodes'][-1]
+            # n_observations = self.stats['observations'][-1]
             start_generation = self.stats['generations'][-1] + 1
             max_unperturbed_return = np.max(self.stats['return_unp'])
         # Initialize variables independent of state
-        # pool = mp.Pool(processes=self.n_workers)
+        pool = mp.Pool(processes=self.n_workers)
+        pb = PoolProgress(pool, update_interval=1, keep_after_done=False, title='Evaluating pertubations')
         best_model_stdct = None
         best_optimizer_stdct = None
         last_checkpoint_time = time.time()
 
         # Evaluate parent model
         # TODO: This can be removed if we sample observations instead 
-        return_queue = mp.Queue()
-        self.eval_fun(self.model.cpu(), self.env, return_queue, 'dummy_seed', collect_inputs=1000, max_episode_length=self.batch_size)
-        unperturbed_out = return_queue.get()
-        
+        unperturbed_out = self.eval_fun(self.model.cpu(), self.env, 'dummy_seed', collect_inputs=1000, max_episode_length=self.batch_size)
+
         # Start training loop
         for n_generation in range(start_generation, self.max_generations):
-            # Empty list of processes, seeds and models and return queue
-            loop_start_time = time.time()
-            processes, seeds, models = [], [], []
-
             # Compute parent model weight-output sensitivities
             self.compute_sensitivities(unperturbed_out['inputs'])
-            
-            # Generate a list of perturbed models and their known random seeds
-            # TODO: This could be be part of the parallel execution (somehow)
-            while len(models) < self.pertubations:
+
+            # Generate random seeds
+            # TODO: Do this more efficiently
+            seeds = []
+            while len(seeds) < self.pertubations:
                 random_seed = np.random.randint(2**30)
-                out = self.perturb_model(random_seed)
-                seeds.extend(out['seeds'])
-                models.extend(out['models'])
-            assert len(seeds) == len(models) and len(models) == self.pertubations
-            
-            # Add all peturbed models to the queue
+                seeds += [random_seed] if self.no_antithetic else [random_seed, -random_seed]
+            assert len(seeds) == self.pertubations
+
+            # Execute all pertubations on the pool of processes
             workers_start_time = time.time()
-            processes, return_queue = self.start_jobs(models, seeds, mp.Queue())
-            # Get output from processes until all are terminated and join
-            raw_output = self.get_job_outputs(processes, return_queue)
+            kwargs = {'max_episode_length': self.batch_size}
+            workers_out = pool.map_async(partial(self.eval_wrap, payload=kwargs), seeds, chunksize=10)
+            unperturbed_out = pool.apply_async(self.eval_fun, (self.model, self.env, 'dummy_seed'), {'max_episode_length': self.batch_size, 'collect_inputs': True})
+            pb.track(workers_out)
+            workers_out = workers_out.get(timeout=600)
+            unperturbed_out = unperturbed_out.get(timeout=600)
             workers_end_time = time.time()
+            assert 'return' in unperturbed_out.keys() and 'seed' in unperturbed_out.keys(), "An evaluation function must give a return and the used seed"
+            # Invert output from list of dicts to dict of lists
+            workers_out = dict(zip(workers_out[0],zip(*[d.values() for d in workers_out])))
+            for k, v in filter(lambda i: i[0] != 'seed', workers_out.items()): workers_out[k] = np.array(v)
 
-            # inputs = [(model, self.env, seed) for model, seed in zip(models, seeds)]
-            # out = pool.starmap(self.eval_fun, inputs)
-
-            # SINGLE THREADED
-            # for i in range(self.pertubations):
-            #     self.eval_fun(models.pop(), self.env, return_queue, seeds.pop(), collect_inputs=False, max_episode_length=self.batch_size)
-            # self.eval_fun(self.model, self.env, return_queue, 'dummy_seed', collect_inputs=1000, max_episode_length=self.batch_size)
-            # raw_output = []
-            # while len(raw_output) < self.pertubations + 1:# or 'dummy_seed' not in [out['seed'] for out in raw_output]:
-            #     while not return_queue.empty():
-            #         raw_output.append(return_queue.get(False))
-            
-            # IPython.embed()
-            
-            # 
-
-            # if 'dummy_seed' not in seeds:
-            #     IPython.embed()
-
-            # Split into parts
-            # TODO This is all a bit ugly. Can't we do something about this?
-            seeds = [out['seed'] for out in raw_output]
-            returns = [out['return'] for out in raw_output]
-            i_observations = [out['n_observations'] for out in raw_output]
-            # Get results of unperturbed model
-            unperturbed_index = seeds.index('dummy_seed')
-            unperturbed_out = raw_output.pop(unperturbed_index)
-            assert unperturbed_out['seed'] == 'dummy_seed'
-            # Remove unperturbed results from all results
-            seeds.pop(unperturbed_index)
-            returns.pop(unperturbed_index)
-            i_observations.pop(unperturbed_index)
-            # Cast to numpy
-            returns = np.array(returns)
-            
             # Shaping, rank, compute gradients, update parameters and learning rate
-            rank = self.unperturbed_rank(returns, unperturbed_out['return'])
-            shaped_returns = self.fitness_shaping(returns)
-            self.compute_gradients(shaped_returns, seeds)
+            rank = self.unperturbed_rank(workers_out['return'], unperturbed_out['return'])
+            shaped_returns = self.fitness_shaping(workers_out['return'])
+            self.compute_gradients(shaped_returns, workers_out['seed'])
             self.model.cpu()  # TODO Find out why the optimizer requires model on CPU even with args.cuda = True
             self.optimizer.step()
             self.sigma = self.beta2sigma(self.beta)
@@ -697,23 +670,35 @@ class ES(Algorithm):
                 max_unperturbed_return = unperturbed_out['return']
 
             # Update iter variables
-            n_episodes += len(returns)
-            n_observations += sum(i_observations)
             # Store statistics
             # TODO self.store_stats(n_generation, n_episodes, n_observations, workers_end_time, workers_start_time, returns, unperturbed_out, rank)
             self.stats['generations'].append(n_generation)
-            self.stats['episodes'].append(n_episodes)
-            self.stats['observations'].append(n_observations)
             self.stats['walltimes'].append(time.time() - self.stats['start_time'])
             self.stats['workertimes'].append(workers_end_time - workers_start_time)
-            self.stats['return_avg'].append(returns.mean())
-            self.stats['return_var'].append(returns.var())
-            self.stats['return_max'].append(returns.max())
-            self.stats['return_min'].append(returns.min())
-            self.stats['return_unp'].append(unperturbed_out['return'])
             self.stats['unp_rank'].append(rank)
             self.stats['sigma'].append(self.sigma)
             self.stats['lr'].append(self.lr_scheduler.get_lr())
+            for k, v in workers_out.items():
+                if not k in ['seed']:
+                    if not k + '_min' in workers_out.keys():
+                        self.stats[k + '_min'] = [np.min(v)]
+                        self.stats[k + '_max'] = [np.max(v)]
+                        self.stats[k + '_avg'] = [np.mean(v)]
+                        self.stats[k + '_var'] = [np.var(v)]
+                        self.stats[k + '_sum'] = [np.sum(v)]
+                        self.stats[k + '_unp'] = [unperturbed_out[k]]
+                    else:
+                        self.stats[k + '_min'].append(np.min(v))
+                        self.stats[k + '_max'].append(np.max(v))
+                        self.stats[k + '_avg'].append(np.mean(v))
+                        self.stats[k + '_var'].append(np.var(v))
+                        self.stats[k + '_sum'].append(np.sum(v))
+                        self.stats[k + '_unp'].append(unperturbed_out[k])
+            # self.stats['return_avg'].append(returns.mean())
+            # self.stats['return_var'].append(returns.var())
+            # self.stats['return_max'].append(returns.max())
+            # self.stats['return_min'].append(returns.min())
+            # self.stats['return_unp'].append(unperturbed_out['return'])
 
             # Print and checkpoint
             self.print_iter()
@@ -724,6 +709,8 @@ class ES(Algorithm):
         
         # End training
         self.save_checkpoint(best_model_stdct, best_optimizer_stdct, best_algorithm_stdct)
+        pool.close()
+        pool.join()
         print("\nTraining done\n\n")
 
     def print_init(self):
@@ -739,7 +726,7 @@ class ES(Algorithm):
     def print_iter(self):
         super(ES, self).print_iter()
         s = " | Sig {:5.4f}".format(self.stats['sigma'][-1])
-        print(s, end='')
+        print(s, end='\n')
 
 
 class NES(ES):
@@ -752,7 +739,14 @@ class NES(ES):
     def beta_gradient_update(self, retrn, eps):
         # return 1 / (self.pertubations * self.beta.exp()) * retrn * (eps.pow(2).sum() - 1)
         return self.sigma**2 / self.pertubations * retrn * (eps.pow(2).sum() - 1)
-        
+
+
+
+
+
+
+
+
 # def generate_seeds_and_models(args, parent_model, self.env):
 #     """
 #     Returns a seed and 2 perturbed models
@@ -779,3 +773,46 @@ class NES(ES):
 # # Adjust max length of episodes
 # if hasattr(args, 'not_var_ep_len') and not args.not_var_ep_len:
 #     args.batch_size = int(5*max(i_observations))
+
+
+# def perturb_model(self, random_seed):
+#     """Perturbs the main model.
+
+#     Modifies the main model with a pertubation of its parameters,
+#     as well as the mirrored perturbation, and returns both perturbed
+#     models.
+    
+#     Args:
+#         random_seed (int): Known random seed. A number between 0 and 2**32.
+
+#     Returns:
+#         dict: A dictionary with keys `models` and `seeds` storing exactly that.
+#     """
+#     # Antithetic or not
+#     reps = 1 if self.no_antithetic else 2
+#     seeds = [random_seed] if self.no_antithetic else [random_seed, -random_seed]
+#     # Get model class and instantiate new models as copies of parent
+#     model_class = type(self.model)
+#     models = []
+#     parameters = [self.model.parameters()]
+#     for i in range(reps):
+#         this_model = model_class(self.env.observation_space, self.env.action_space) if hasattr(self.env, 'observation_space') else model_class()
+#         this_model.load_state_dict(self.model.state_dict())
+#         this_model.zero_grad()
+#         models.append(this_model)
+#         parameters.append(this_model.parameters())
+#     parameters = zip(*parameters)
+#     # Set seed and permute by isotropic Gaussian noise
+#     torch.manual_seed(random_seed)
+#     torch.cuda.manual_seed(random_seed)
+#     for pp, p1, *p2 in parameters:
+#         eps = self.get_pertubation(pp)
+#         p1.data += self.sigma * eps
+#         assert not np.isnan(p1.data).any()
+#         assert not np.isinf(p1.data).any()
+#         if not self.no_antithetic:
+#             p2[0].data -= self.sigma * eps
+#             assert not np.isnan(p2[0].data).any()
+#             assert not np.isinf(p2[0].data).any()
+#             assert not (p1.data == p2[0].data).all()
+#     return {'models': models, 'seeds': seeds}
