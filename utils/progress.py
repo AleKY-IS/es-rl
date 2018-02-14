@@ -50,15 +50,35 @@ class ProgressBar(object):
         sys.stdout.flush()
 
 
-class PoolProgress:
-  def __init__(self,pool,update_interval=3):
-    self.pool            = pool
-    self.update_interval = update_interval
-  def track(self, job):
-    task = self.pool._cache[job._job]
-    while task._number_left>0:
-      print("Tasks remaining = {0}".format(task._number_left*task._chunksize))
-      time.sleep(self.update_interval)
+class PoolProgress(object):
+    def __init__(self, pool, update_interval=3, **kwargs):
+        """Monitors progress of jobs on a parallel pool
+        
+        Args:
+            pool (multiprocessing.Pool): A pool of workers
+            **kwargs (dict): Additional arguments to ProgressBar
+            update_interval (int, optional): Defaults to 3. Interval in seconds
+        """
+
+        self.pb = ProgressBar(**kwargs)
+        self.pool = pool
+        self.update_interval = update_interval
+
+    def track(self, job):
+        """Track a job
+        
+        Args:
+            job (multiprocessing.Pool.MapResult): The result object of the job to monitor
+        """
+
+        task = self.pool._cache[job._job]
+        n_tasks = task._number_left*task._chunksize
+        self.pb.end_value = n_tasks
+        self.pb.start()
+        while task._number_left>0:
+            self.pb.progress(n_tasks - task._number_left*task._chunksize)
+            time.sleep(self.update_interval)
+        self.pb.end()
 
 
 def startprogress(title):
