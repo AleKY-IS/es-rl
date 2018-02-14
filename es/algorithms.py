@@ -70,10 +70,8 @@ class Algorithm(object):
         # Attributes to exclude from the state dictionary
         self.exclude_from_state_dict = {'env', 'optimizer', 'lr_scheduler', 'model'}
         # Initialize dict for saving statistics
-        stat_keys = ['generations', 'episodes', 'observations', 'walltimes',
-                     'return_avg', 'return_var', 'return_max', 'return_min',
-                     'return_unp', 'unp_rank', 'lr', 'workertimes']
-        self.stats = {key: [] for key in stat_keys}  # dict.fromkeys(stat_keys) gives None values but want empty list
+        stat_keys = ['generations', 'walltimes', 'workertimes', 'unp_rank', 'lr']
+        self.stats = {key: [] for key in stat_keys}
         self.stats['do_monitor'] = ['return_unp', 'lr']
 
     @abstractmethod
@@ -131,7 +129,7 @@ class Algorithm(object):
         if type(returns) is list:
             returns = np.array(returns)
         n = len(returns)
-        sorted_indices = np.argsort(-returns)
+        sorted_indices = np.argsort(- returns)
         u = np.zeros(n)
         for k in range(n):
             u[sorted_indices[k]] = np.max([0, np.log(n / 2 + 1) - np.log(k + 1)])
@@ -335,16 +333,18 @@ class Algorithm(object):
             return
         lr = self.stats['lr'][-1] if type(self.stats['lr'][-1]) is not list else self.stats['lr'][-1][0]
         try:
-            G = 'G {0:' + str(len(str(self.max_generations))) + 'd}'
             # O = 'O {1:' + str(len(str(self.batch_size * self.max_generations * self.perturbations))) + 'd}'
+            G = 'G {0:' + str(len(str(self.max_generations))) + 'd}'
             R = 'R {5:' + str(len(str(self.perturbations))) + 'd}'
-            s = G + " | F {1:6.2f} | A {2:6.2f} | Ma {3:6.2f} | Mi {4:6.2f} | " + R + " | L {6:5.4f}"
+            s = G + ' | F {1:6.2f} | A {2:6.2f} | Ma {3:6.2f} | Mi {4:6.2f} | ' + R + ' | L {6:5.4f}'
             s = s.format(self.stats['generations'][-1], self.stats['return_unp'][-1],
                          self.stats['return_avg'][-1],  self.stats['return_max'][-1],
                          self.stats['return_min'][-1],  self.stats['unp_rank'][-1], lr)
-            print(s, end="")
+            if 'accuracy_unp' in self.stats.keys():
+                s += ' | C {0:5.1f}%'.format(self.stats['accuracy_unp'][-1]*100)
+            print(s, end='')
         except Exception:
-            print('Could not print_iter', end="")
+            print('Could not print_iter', end='')
 
     def load_checkpoint(self, chkpt_dir, load_best=False):
         """Loads a saved checkpoint.
@@ -370,6 +370,28 @@ class Algorithm(object):
         self.model.load_state_dict(model_state_dict)
         self.optimizer.load_state_dict(optimizer_state_dict)
         self.lr_scheduler.last_epoch = self.stats['generations'][-1]
+
+    def store_stats(self, workers_out, unperturbed_out, generation, rank, workers_start_time, workers_end_time):
+        # Check existence of required keys. Create if not there.
+        ks = filter(lambda k: k != 'seed', workers_out.keys())
+        add_dict = {}
+        for k in ks: add_dict.update({k + suffix: [] for suffix in ['_min', '_max', '_avg', '_var', '_sum', '_unp']})
+        if not set(add_dict.keys()).issubset(set(self.stats.keys())):
+            self.stats.update(add_dict)
+        # Append data
+        self.stats['generations'].append(generation)
+        self.stats['walltimes'].append(time.time() - self.stats['start_time'])
+        self.stats['workertimes'].append(workers_end_time - workers_start_time)
+        self.stats['unp_rank'].append(rank)
+        self.stats['lr'].append(self.lr_scheduler.get_lr())
+        for k, v in workers_out.items():
+            if not k in ['seed']:
+                self.stats[k + '_min'].append(np.min(v))
+                self.stats[k + '_max'].append(np.max(v))
+                self.stats[k + '_avg'].append(np.mean(v))
+                self.stats[k + '_var'].append(np.var(v))
+                self.stats[k + '_sum'].append(np.sum(v))
+                self.stats[k + '_unp'].append(unperturbed_out[k])
 
     def save_checkpoint(self, best_model_stdct=None, best_optimizer_stdct=None, best_algorithm_stdct=None):
         """
@@ -452,12 +474,16 @@ class ES(Algorithm):
         super(ES, self).__init__(model, env, optimizer, lr_scheduler, eval_fun, pertubations, batch_size, max_generations, safe_mutation, no_antithetic, **kwargs)
         self.sigma = sigma
         self.optimize_sigma = optimize_sigma
-        self.stats['sigma'] = []
         self.stats['do_monitor'].append('sigma')
+        self.stats['sigma'] = []
         if self.optimize_sigma:
             # Add beta to optimizer and lr_scheduler
             beta_par = {'label': 'beta', 'params': self.beta, 'lr': self.lr_scheduler.get_lr()[0] / 10, 'weight_decay': 0}
             self.add_parameter_to_optimize(beta_par)
+
+    def store_stats(self, *args):
+        super(ES, self).store_stats(*args)
+        self.stats['sigma'].append(self.sigma)
 
     @property
     def beta(self):
@@ -497,22 +523,20 @@ class ES(Algorithm):
         perturbed_model.zero_grad()
         # Handle antithetic sampling
         sign = np.sign(random_seed)
-        random_seed = float(abs(random_seed))
         # Set seed and permute by isotropic Gaussian noise
-        torch.manual_seed(random_seed)
-        torch.cuda.manual_seed(random_seed)
+        torch.manual_seed(abs(random_seed))
+        torch.cuda.manual_seed(abs(random_seed))
         for p, pp, sens in zip_longest(self.model.parameters(), perturbed_model.parameters(), self.sensitivities):
             eps = self.get_pertubation(p, sensitivity=sens)
             pp.data += sign * self.sigma * eps
             assert not np.isnan(pp.data).any()
             assert not np.isinf(pp.data).any()
-        return perturbed_model, float(random_seed)
+        return perturbed_model
 
     def weight_gradient_update(self, retrn, eps):
         return 1 / (self.perturbations * self.sigma) * (retrn * eps)
 
     def beta_gradient_update(self, retrn, eps):
-        # return 1 / (self.perturbations * self.beta.exp()) * retrn * (eps.pow(2).sum() - 1)
         return 1 / (2 * self.perturbations * self.sigma**2) * retrn * (eps.pow(2).sum() - 1)
 
     def compute_gradients(self, returns, random_seeds):
@@ -539,7 +563,7 @@ class ES(Algorithm):
         # Compute gradients
         for i, retrn in enumerate(returns):
             # Set random seed, get antithetic multiplier and return
-            sign = 1 if random_seeds[i] > 0 else -1
+            sign = np.sign(random_seeds[i])
             torch.manual_seed(random_seeds[i])
             torch.cuda.manual_seed(random_seeds[i])
             for layer, param in enumerate(self.model.parameters()):
@@ -567,7 +591,7 @@ class ES(Algorithm):
         # TODO Maybe possible to move to abstract class either in train method or as distinct methods (e.g. init_train)
         self.print_init()
         # Initialize variables dependent on restoring
-        if not self.stats['episodes']:
+        if not self.stats['generations']:
             # If nothing stored then start from scratch
             start_generation = 0
             max_unperturbed_return = -1e8
@@ -595,9 +619,9 @@ class ES(Algorithm):
             self.compute_sensitivities(unperturbed_out['inputs'])
 
             # Generate random seeds
-            seeds = torch.rand(int(self.perturbations/((not self.no_antithetic) + 1))).long()
+            seeds = torch.LongTensor(int(self.perturbations/((not self.no_antithetic) + 1))).random_()
             if not self.no_antithetic: seeds = torch.cat([seeds, -seeds])
-            assert len(seeds) == self.perturbations
+            assert len(seeds) == self.perturbations, 'Number of created seeds is not equal to wanted perturbations'
 
             # Execute all pertubations on the pool of processes
             workers_start_time = time.time()
@@ -634,38 +658,14 @@ class ES(Algorithm):
                 best_algorithm_stdct = self.state_dict(exclude=True)
                 max_unperturbed_return = unperturbed_out['return']
 
-            # Update iter variables
-            # Store statistics
-            # TODO self.store_stats(workers_out, unperturbed_out, n_generation, workers_end_time, workers_start_time, rank)
-            self.stats['generations'].append(n_generation)
-            self.stats['walltimes'].append(time.time() - self.stats['start_time'])
-            self.stats['workertimes'].append(workers_end_time - workers_start_time)
-            self.stats['unp_rank'].append(rank)
-            self.stats['sigma'].append(self.sigma)
-            self.stats['lr'].append(self.lr_scheduler.get_lr())
-            for k, v in workers_out.items():
-                if not k in ['seed']:
-                    if not k + '_min' in workers_out.keys():
-                        self.stats[k + '_min'] = [np.min(v)]
-                        self.stats[k + '_max'] = [np.max(v)]
-                        self.stats[k + '_avg'] = [np.mean(v)]
-                        self.stats[k + '_var'] = [np.var(v)]
-                        self.stats[k + '_sum'] = [np.sum(v)]
-                        self.stats[k + '_unp'] = [unperturbed_out[k]]
-                    else:
-                        self.stats[k + '_min'].append(np.min(v))
-                        self.stats[k + '_max'].append(np.max(v))
-                        self.stats[k + '_avg'].append(np.mean(v))
-                        self.stats[k + '_var'].append(np.var(v))
-                        self.stats[k + '_sum'].append(np.sum(v))
-                        self.stats[k + '_unp'].append(unperturbed_out[k])
-
             # Print and checkpoint
+            self.store_stats(workers_out, unperturbed_out, n_generation, rank, workers_start_time, workers_end_time)
             self.print_iter()
             if last_checkpoint_time < time.time() - self.chkpt_int:
                 plot_stats(self.stats, self.chkpt_dir)
                 self.save_checkpoint(best_model_stdct, best_optimizer_stdct, best_algorithm_stdct)
                 last_checkpoint_time = time.time()
+            print()
         
         # End training
         self.save_checkpoint(best_model_stdct, best_optimizer_stdct, best_algorithm_stdct)
@@ -686,7 +686,7 @@ class ES(Algorithm):
     def print_iter(self):
         super(ES, self).print_iter()
         s = " | Sig {:5.4f}".format(self.stats['sigma'][-1])
-        print(s, end='\n')
+        print(s, end='')
 
 
 class NES(ES):
