@@ -25,8 +25,6 @@ from utils.misc import get_inputs_from_dict, get_inputs_from_dict_class
 
 # TODO: Get these from modules
 supervised_datasets = ['MNIST', 'FashionMNIST']
-# nets = ['MNISTNet', 'DQN', 'FFN', 'MujocoFFN', 'ES']
-# algorithms = ['NES', 'xNES']
 
 
 def parse_inputs():
@@ -48,8 +46,10 @@ def parse_inputs():
         0.99970     5%
         0.99977     10%
 
-    MNIST SGD settings
-        --optimizer SGD --lr 0.001 --momentum 0.9 --safe-mutation SUM --sigma 0.05 --perturbations 40
+    MNIST settings
+        --optimizer SGD --lr 0.015 --gamma 0.99970 --perturbations 40 --sigma 0.05
+        --optimizer SGD --lr 0.080 --gamma 0.99970 --perturbations 300 --sigma 0.05
+
     """
     parser = argparse.ArgumentParser(description='Experiments')
     # Algorithm
@@ -227,7 +227,6 @@ def get_eval_funs(args):
 
 def get_lr_from_perturbations(args):
     # Problem dimension from perturbations
-    ##IPython.embed()
     d = np.exp((args.perturbations-4)/3)
     if args.lr_from_perturbations == 1:
         args.lr = (9 + 3 * np.log(d))/(5*d**(3/2))
@@ -272,13 +271,11 @@ if __name__ == '__main__':
     if args.restore:
         args.algorithm.load_checkpoint(args.restore, load_best=args.test)
         args.chkpt_dir = args.restore
-    # Get input dictionary of args for algorithm
-    # args_dict = vars(args)
     
-    # Set number of OMP threads for CPU computations
-    # NOTE: This is needed for my personal stationary Linux PC for partially unknown reasons
-    if platform.system() == 'Linux':
-        torch.set_num_threads(1)
+    # # Set number of OMP threads for CPU computations
+    # # NOTE: This is needed for my personal stationary Linux PC for partially unknown reasons
+    # if platform.system() == 'Linux':
+    #     torch.set_num_threads(1)
 
     # Execute
     if not args.test:
