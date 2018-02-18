@@ -228,7 +228,7 @@ def print_group_info(algorithm_states, groups):
     longest_val_len = 0
     for s in unique_states:
         for k, v in s.items():
-            if k != 'stats':
+            if not k in ['stats', 'sensitivities', 'chkpt_dir']:
                 longest_key_len = max(longest_key_len, len(k))
                 longest_val_len = max(longest_val_len, len(str(v)))
     format_str = '{0:' + str(longest_key_len) + 's}\t{1:' + str(longest_val_len) + 's}\n'
@@ -237,7 +237,7 @@ def print_group_info(algorithm_states, groups):
             f.write('='*(len(format_str.format('0', '0'))-1) + '\n')
             f.write(format_str.format('GROUP', str(g_id)))
             for k, v in s.items():
-                if k != 'stats':
+                if not k in ['stats', 'sensitivities', 'chkpt_dir']:
                     f.write(format_str.format(k, str(v)))
 
 
@@ -293,7 +293,7 @@ def monitor(args):
         token_file = os.path.join(this_file_dir_local, 'dropboxtoken.tok')
         dbx = db.get_dropbox_client(token_file)
 
-    ignored_keys = {'chkpt_dir', 'stats'}
+    ignored_keys = {'chkpt_dir', 'stats', 'sensitivities'}
     for s in algorithm_states:
         if s['optimize_sigma']:
             ignored_keys.add('sigma')
