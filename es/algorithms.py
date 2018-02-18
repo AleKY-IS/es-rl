@@ -45,7 +45,7 @@ class Algorithm(object):
 
     __metaclass__ = ABCMeta
 
-    def __init__(self, model, env, optimizer, lr_scheduler, eval_fun, perturbations, batch_size, max_generations, safe_mutation, no_antithetic, n_workers=mp.cpu_count(), chkpt_dir=None, chkpt_int=600, cuda=False, silent=False):
+    def __init__(self, model, env, optimizer, lr_scheduler, eval_fun, perturbations, batch_size, max_generations, safe_mutation, no_antithetic, workers=mp.cpu_count(), chkpt_dir=None, chkpt_int=600, cuda=False, silent=False):
         self.algorithm = self.__class__.__name__
         # Algorithmic attributes
         self.model = model
@@ -59,14 +59,17 @@ class Algorithm(object):
         self.batch_size = batch_size
         self.max_generations = max_generations
         # Execution attributes
-        self.n_workers = n_workers
+        self.workers = workers
         self.cuda = cuda
         self.silent = silent
         # Checkpoint attributes
         self.chkpt_dir = chkpt_dir
         self.chkpt_int = chkpt_int
         # Safe mutation sensitivities
-        self.sensitivities = [None]
+        n_layers = 0
+        for _ in self.model.parameters():
+            n_layers += 1
+        self.sensitivities = [None]*n_layers
         # Attributes to exclude from the state dictionary
         self.exclude_from_state_dict = {'env', 'optimizer', 'lr_scheduler', 'model'}
         # Initialize dict for saving statistics
@@ -75,7 +78,7 @@ class Algorithm(object):
         self.stats['do_monitor'] = ['return_unp', 'lr']
 
     @abstractmethod
-    def perturb_model(self, random_seed):
+    def perturb_model(self, seed):
         pass
 
     @abstractmethod
@@ -149,6 +152,10 @@ class Algorithm(object):
         `cuda` is `True`. Safe mutations are performed if self.safe_mutation 
         is not None.
         """
+        # TODO: This method could also return the perturbations for all model 
+        #       parameters when e.g. sampling from non-isotropic Gaussian. Then, 
+        #       param could default to None. It should still sample form isotropic 
+        #       Gaussian
         # Sample standard normal distributed pertubation
         if param.is_cuda and cuda:
             eps = torch.cuda.FloatTensor(param.data.size())
@@ -184,6 +191,17 @@ class Algorithm(object):
         if self.cuda:
             inputs = inputs.cuda()
             self.model.cuda()
+        if self.safe_mutation is None:
+            # Dummy backprop to initialize gradients, then return
+            output = self.model(inputs[0].view(1,*inputs[0].size()))
+            if self.cuda:
+                t = torch.cuda.FloatTensor(1, output.data.size()[1]).fill_(0)
+            else:
+                t = torch.zeros(1, output.data.size()[1])
+            t[0,0] = 1
+            output.backward(t)
+            self.model.zero_grad()
+            return
         outputs = self.model(inputs)
         batch_size = outputs.data.size()[0]
         n_outputs = outputs.data.size()[1]
@@ -193,11 +211,7 @@ class Algorithm(object):
             t = torch.zeros(batch_size, n_outputs)
 
         # Compute sensitivities using specified method
-        if self.safe_mutation is None:
-            # Skip if not required but activate gradients in model first
-            # outputs.backward(t)
-            return
-        elif self.safe_mutation == 'ABS':
+        if self.safe_mutation == 'ABS':
             sensitivities = self._compute_sensitivities_abs(outputs, t)
         elif self.safe_mutation == 'SUM':
             sensitivities = self._compute_sensitivities_sum(outputs, t)
@@ -229,12 +243,6 @@ class Algorithm(object):
             assert not np.isnan(sens).any()
             assert not np.isinf(sens).any()
         self.sensitivities = sensitivities
-        # return sensitivities
-        # self.model.zero_grad()
-        # for pid, param in enumerate(self.model.parameters()):
-        #     param.grad.data = sensitivities[pid].clone()
-        #     assert not np.isnan(param.grad.data).any()
-        #     assert not np.isinf(param.grad.data).any()
 
     def _compute_sensitivities_abs(self, outputs, t):
         # Backward pass for each output unit (and accumulate gradients)
@@ -319,7 +327,7 @@ class Algorithm(object):
         s += "Safe mutation         {:s}\n".format(safe_mutation)
         s += "Antithetic sampling   {:s}\n".format(str(not self.no_antithetic))
         s += "CUDA                  {:s}\n".format(str(self.cuda))
-        s += "Workers               {:d}\n".format(self.n_workers)
+        s += "Workers               {:d}\n".format(self.workers)
         if self.chkpt_dir is not None:
             with open(os.path.join(self.chkpt_dir, 'init.log'), 'a') as f:
                 f.write(s)
@@ -371,7 +379,7 @@ class Algorithm(object):
         self.optimizer.load_state_dict(optimizer_state_dict)
         self.lr_scheduler.last_epoch = self.stats['generations'][-1]
 
-    def store_stats(self, workers_out, unperturbed_out, generation, rank, workers_start_time, workers_end_time):
+    def store_stats(self, workers_out, unperturbed_out, generation, rank, workers_time):
         # Check existence of required keys. Create if not there.
         ks = filter(lambda k: k != 'seed', workers_out.keys())
         add_dict = {}
@@ -381,7 +389,7 @@ class Algorithm(object):
         # Append data
         self.stats['generations'].append(generation)
         self.stats['walltimes'].append(time.time() - self.stats['start_time'])
-        self.stats['workertimes'].append(workers_end_time - workers_start_time)
+        self.stats['workertimes'].append(workers_time)
         self.stats['unp_rank'].append(rank)
         self.stats['lr'].append(self.lr_scheduler.get_lr())
         for k, v in workers_out.items():
@@ -478,7 +486,9 @@ class ES(Algorithm):
         self.stats['sigma'] = []
         if self.optimize_sigma:
             # Add beta to optimizer and lr_scheduler
-            beta_par = {'label': 'beta', 'params': self.beta, 'lr': self.lr_scheduler.get_lr()[0] / 10, 'weight_decay': 0}
+            beta_val = np.log(2 * self.sigma**2)
+            beta_par = {'label': 'beta', 'params': Variable(torch.Tensor([beta_val]), requires_grad=True),
+                        'lr': self.lr_scheduler.get_lr()[0] / 10, 'weight_decay': 0}
             self.add_parameter_to_optimize(beta_par)
 
     def store_stats(self, *args):
@@ -487,11 +497,8 @@ class ES(Algorithm):
 
     @property
     def beta(self):
-        beta_val = np.log(2 * self.sigma**2)
         beta_group = list(filter(lambda group: group['label'] == 'beta', self.optimizer.param_groups))
-        if self.optimize_sigma and not beta_group:
-            beta = Variable(torch.Tensor([beta_val]), requires_grad=True)
-        elif self.optimize_sigma:
+        if self.optimize_sigma:
             beta = beta_group[0]['params'][0]
         else:
             beta = np.log(2 * self.sigma**2)
@@ -505,13 +512,13 @@ class ES(Algorithm):
     def beta2sigma(beta):
         return np.sqrt(0.5 * np.exp(beta)) if type(beta) is np.float64 else (0.5 * beta.exp()).sqrt().data.numpy()[0]
 
-    def perturb_model(self, random_seed):
+    def perturb_model(self, seed):
         """Perturbs the main model.
 
         Modifies the main model with a pertubation of its parameters.
         
         Args:
-            random_seed (int): Known random seed. A number between 0 and 2**32.
+            seed (int): Known random seed. A number between 0 and 2**32.
 
         Returns:
             torch.nn.module: The model
@@ -522,10 +529,10 @@ class ES(Algorithm):
         perturbed_model.load_state_dict(self.model.state_dict())
         perturbed_model.zero_grad()
         # Handle antithetic sampling
-        sign = np.sign(random_seed)
+        sign = np.sign(seed)
         # Set seed and permute by isotropic Gaussian noise
-        torch.manual_seed(abs(random_seed))
-        torch.cuda.manual_seed(abs(random_seed))
+        torch.manual_seed(abs(seed))
+        torch.cuda.manual_seed(abs(seed))
         for p, pp, sens in zip_longest(self.model.parameters(), perturbed_model.parameters(), self.sensitivities):
             eps = self.get_pertubation(p, sensitivity=sens)
             pp.data += sign * self.sigma * eps
@@ -537,19 +544,14 @@ class ES(Algorithm):
         return 1 / (self.perturbations * self.sigma) * (retrn * eps)
 
     def beta_gradient_update(self, retrn, eps):
-        return 1 / (2 * self.perturbations * self.sigma**2) * retrn * (eps.pow(2).sum() - 1)
+        return 1 / (self.perturbations * self.beta.exp()) * retrn * (eps.pow(2).sum() - 1)
 
-    def compute_gradients(self, returns, random_seeds):
+    def compute_gradients(self, returns, seeds):
         """Computes the gradients of the weights of the model wrt. to the return. 
         
         The gradients will point in the direction of change in the weights resulting in a
         decrease in the return.
         """
-        # Verify input
-        n_returns = len(returns)
-        assert n_returns == self.perturbations
-        assert len(random_seeds) == n_returns
-
         # CUDA
         if self.cuda:
             self.model.cuda()
@@ -563,9 +565,9 @@ class ES(Algorithm):
         # Compute gradients
         for i, retrn in enumerate(returns):
             # Set random seed, get antithetic multiplier and return
-            sign = np.sign(random_seeds[i])
-            torch.manual_seed(random_seeds[i])
-            torch.cuda.manual_seed(random_seeds[i])
+            sign = np.sign(seeds[i])
+            torch.manual_seed(abs(seeds[i]))
+            torch.cuda.manual_seed(abs(seeds[i]))
             for layer, param in enumerate(self.model.parameters()):
                 eps = self.get_pertubation(param, sensitivity=self.sensitivities[layer], cuda=self.cuda)
                 # TODO Create small gradient update method
@@ -578,9 +580,13 @@ class ES(Algorithm):
         # Set gradients
         self.optimizer.zero_grad()
         for layer, param in enumerate(self.model.parameters()):
+            # IPython.embed()
+            # if not hasattr(param.grad, 'data'):
+            #     param.grad.data = torch.zeros(param.size())
             param.grad.data = - weight_gradients[layer]
             assert not np.isnan(param.grad.data).any()
             assert not np.isinf(param.grad.data).any()
+        # TODO: For each parameter group in the optimizer that is not in the model, update the gradient
         if self.optimize_sigma:
             self.beta.grad = - beta_gradient
             assert not np.isnan(self.beta.grad.data).any()
@@ -603,7 +609,7 @@ class ES(Algorithm):
             start_generation = self.stats['generations'][-1] + 1
             max_unperturbed_return = np.max(self.stats['return_unp'])
         # Initialize variables independent of state
-        pool = mp.Pool(processes=self.n_workers)
+        pool = mp.Pool(processes=self.workers)
         pb = PoolProgress(pool, update_interval=1, keep_after_done=False, title='Evaluating perturbations')
         best_model_stdct = None
         best_optimizer_stdct = None
@@ -628,10 +634,10 @@ class ES(Algorithm):
             kwargs = {'max_episode_length': self.batch_size}
             workers_out = pool.map_async(partial(self.eval_wrap, payload=kwargs), seeds, chunksize=10)
             unperturbed_out = pool.apply_async(self.eval_fun, (self.model, self.env, 'dummy_seed'), {'max_episode_length': self.batch_size, 'collect_inputs': True})
-            pb.track(workers_out)
+            if "DISPLAY" in os.environ: pb.track(workers_out)
             workers_out = workers_out.get(timeout=600)
             unperturbed_out = unperturbed_out.get(timeout=600)
-            workers_end_time = time.time()
+            workers_time = time.time() - workers_start_time
             assert 'return' in unperturbed_out.keys() and 'seed' in unperturbed_out.keys(), "An evaluation function must give a return and the used seed"
             # Invert output from list of dicts to dict of lists
             workers_out = dict(zip(workers_out[0],zip(*[d.values() for d in workers_out])))
@@ -659,7 +665,7 @@ class ES(Algorithm):
                 max_unperturbed_return = unperturbed_out['return']
 
             # Print and checkpoint
-            self.store_stats(workers_out, unperturbed_out, n_generation, rank, workers_start_time, workers_end_time)
+            self.store_stats(workers_out, unperturbed_out, n_generation, rank, workers_time)
             self.print_iter()
             if last_checkpoint_time < time.time() - self.chkpt_int:
                 plot_stats(self.stats, self.chkpt_dir)
@@ -692,13 +698,13 @@ class ES(Algorithm):
 class NES(ES):
     def __init__(self, model, env, optimizer, lr_scheduler, eval_fun, perturbations, batch_size, max_generations, safe_mutation, no_antithetic, sigma, optimize_sigma=False, beta=None, chkpt_dir=None, chkpt_int=300, cuda=False, silent=False):
         super(NES, self).__init__(model, env, optimizer, lr_scheduler, eval_fun, perturbations, batch_size, max_generations, safe_mutation, no_antithetic, sigma, optimize_sigma=optimize_sigma, beta=beta, chkpt_dir=chkpt_dir, chkpt_int=chkpt_int, cuda=cuda, silent=silent)
+        IPython.embed()
 
     def weight_gradient_update(self, retrn, eps):
         return self.sigma / self.perturbations * (retrn * eps)
 
     def beta_gradient_update(self, retrn, eps):
-        # return 1 / (self.perturbations * self.beta.exp()) * retrn * (eps.pow(2).sum() - 1)
-        return self.sigma**2 / self.perturbations * retrn * (eps.pow(2).sum() - 1)
+        return self.beta.exp() / (2*self.perturbations) * retrn * (eps.pow(2).sum() - 1)
 
 
 
@@ -712,9 +718,9 @@ class NES(ES):
 #     Returns a seed and 2 perturbed models
 #     """
 #     np.random.seed()
-#     random_seed = np.random.randint(2**30)
-#     two_models = perturb_model(args, parent_model, random_seed, self.env)
-#     return random_seed, two_models
+#     seed = np.random.randint(2**30)
+#     two_models = perturb_model(args, parent_model, seed, self.env)
+#     return seed, two_models
 
 # if self.optimize_sigma:
 #     # print("beta {:5.2f} | bg {:5.1f}".format(args.beta.data.numpy()[0], args.beta.grad.data.numpy()[0]))
@@ -735,7 +741,7 @@ class NES(ES):
 #     args.batch_size = int(5*max(i_observations))
 
 
-# def perturb_model(self, random_seed):
+# def perturb_model(self, seed):
 #     """Perturbs the main model.
 
 #     Modifies the main model with a pertubation of its parameters,
@@ -743,14 +749,14 @@ class NES(ES):
 #     models.
     
 #     Args:
-#         random_seed (int): Known random seed. A number between 0 and 2**32.
+#         seed (int): Known random seed. A number between 0 and 2**32.
 
 #     Returns:
 #         dict: A dictionary with keys `models` and `seeds` storing exactly that.
 #     """
 #     # Antithetic or not
 #     reps = 1 if self.no_antithetic else 2
-#     seeds = [random_seed] if self.no_antithetic else [random_seed, -random_seed]
+#     seeds = [seed] if self.no_antithetic else [seed, -seed]
 #     # Get model class and instantiate new models as copies of parent
 #     model_class = type(self.model)
 #     models = []
@@ -763,8 +769,8 @@ class NES(ES):
 #         parameters.append(this_model.parameters())
 #     parameters = zip(*parameters)
 #     # Set seed and permute by isotropic Gaussian noise
-#     torch.manual_seed(random_seed)
-#     torch.cuda.manual_seed(random_seed)
+#     torch.manual_seed(seed)
+#     torch.cuda.manual_seed(seed)
 #     for pp, p1, *p2 in parameters:
 #         eps = self.get_pertubation(pp)
 #         p1.data += self.sigma * eps
