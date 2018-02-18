@@ -13,7 +13,7 @@ class ProgressBar(object):
             try:
                 _, bar_width = os.popen('stty size', 'r').read().split()
             except Exception:
-                bar_width = 10 + len(title + self._c)
+                bar_width = 10 + len(title) + self._c
         self._w = int(bar_width) - len(self.title) - self._c  # Subtract constant parts of string length
         assert self._w >= 0, 'Title too long, bar width too narrow or terminal window not wide enough'
         self._b = self._w + len(self.title) + self._c  # Number of left shifts to apply at end to reset to head of line
@@ -59,7 +59,6 @@ class PoolProgress(object):
             **kwargs (dict): Additional arguments to ProgressBar
             update_interval (int, optional): Defaults to 3. Interval in seconds
         """
-
         self.pb = ProgressBar(**kwargs)
         self.pool = pool
         self.update_interval = update_interval
@@ -70,7 +69,6 @@ class PoolProgress(object):
         Args:
             job (multiprocessing.Pool.MapResult): The result object of the job to monitor
         """
-
         task = self.pool._cache[job._job]
         n_tasks = task._number_left*task._chunksize
         self.pb.end_value = n_tasks
