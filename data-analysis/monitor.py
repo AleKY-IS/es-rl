@@ -231,8 +231,10 @@ def monitor(args):
     # Setup drobbox
     if args.c:
         package_parent_folder_monitored_directory = os.path.join(os.sep,*package_root_monitored_directory.split(os.sep)[:-1])
-        args.dbx_dir = os.sep + os.path.relpath(args.monitor_dir, package_parent_folder_monitored_directory)
+        # args.dbx_dir = os.sep + os.path.relpath(args.monitor_dir, package_parent_folder_monitored_directory)
+        args.dbx_dir = os.sep + os.path.relpath(args.d, package_parent_folder_monitored_directory)
         token_file = os.path.join(this_file_dir_local, 'dropboxtoken.tok')
+        assert os.path.exists(token_file)
         dbx = db.get_dropbox_client(token_file)
 
     ignored_keys = {'chkpt_dir', 'stats', 'sensitivities'}
@@ -261,7 +263,8 @@ def monitor(args):
 
         # Upload results to dropbox
         if args.c:
-            db.copy_dir(dbx, args.monitor_dir, args.dbx_dir)
+            # db.upload_directory(dbx, args.monitor_dir, args.dbx_dir)
+            db.upload_directory(dbx, args.d, args.dbx_dir)
 
         # Break condition
         if wait_for_updates(args, last_refresh, get_max_chkpt_int(algorithm_states), mtimes):
