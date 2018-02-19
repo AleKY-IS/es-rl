@@ -114,6 +114,7 @@ def timeseries_final_distribution(datas, label, ybins='auto'):
 
 
 def timeseries_median_grouped(xdatas, ydatas, groups, xlabel, ylabel):
+    assert type(groups) == np.ndarray
     sns.set(color_codes=True)
     plt.figure()
     legend = []
