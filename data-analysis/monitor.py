@@ -18,6 +18,7 @@ import utils.plotting as plot
 import utils.db as db
 import utils.filesystem as fs
 from utils.misc import get_equal_dicts, length_of_longest
+from data_analysis import print_group_info, get_best, get_max_chkpt_int, invert_signs, get_checkpoint_directories
 
 
 def load_data(checkpoint_directories, old_mtimes=None, old_data=None, best=False):
@@ -69,38 +70,13 @@ def load_data(checkpoint_directories, old_mtimes=None, old_data=None, best=False
     return algorithm_states_list
 
 
-def get_max_chkpt_int(algorithm_states):
-    """Get the maximum time in seconds between checkpoints.
-    """
-    max_chkpt_int = -1
-    for s in algorithm_states:
-        max_chkpt_int = max(s['chkpt_int'], max_chkpt_int)
-    return max_chkpt_int
-
-
-def invert_signs(algorithm_states, keys_to_monitor):
-    """Invert sign on negative returns.
-    
-    Negative returns indicate a converted minimization problem so this converts the problem 
-    considered to maximization which is the standard in the algorithms.
-
-    Args:
-        algorithm_states (list): [description]
-        keys_to_monitor (dict): [description]
-    """
-    if keys_to_monitor == 'all':
-        keys_to_monitor = {'return_unp', 'return_max', 'return_min', 'return_avg'}
-    for s in algorithm_states:
-        if (np.array(s['stats']['return_unp']) < 0).all():
-            for k in {'return_unp', 'return_max', 'return_min', 'return_avg'}.intersection(keys_to_monitor):
-                s['stats'][k] = [-retrn for retrn in s['stats'][k]]
-
-
 def sub_into_lists(algorithm_states, keys_to_monitor):
     for s in algorithm_states:
         for k in keys_to_monitor:
             if type(s['stats'][k][0]) is list:
                 s['stats'][k] = [vals_group[0] for vals_group in s['stats'][k]]
+                if k == 'lr' and 'lr' not in s.keys():
+                    s['lr'] = s['stats'][k][0]
 
 
 def create_plots(args, algorithm_states, keys_to_monitor, groups):
@@ -193,16 +169,6 @@ def get_keys_to_monitor(algorithm_states):
     return keys_to_monitor
 
 
-def get_best(algorithm_states):
-    best_id = 0
-    best_return = 0
-    for i, s in enumerate(algorithm_states):
-        if max(s['stats']['return_unp']) > best_return:
-            best_return = max(s['stats']['return_unp'])
-            best_id = i
-    return algorithm_states[best_id]
-
-
 def get_data(old_mtimes=None, old_data=None, timeout=30*60, checkevery=30):
     checkpoint_directories = get_checkpoint_directories(args.d)
     algorithm_states = load_data(checkpoint_directories, old_mtimes=old_mtimes, old_data=old_data)
@@ -221,26 +187,6 @@ def get_data(old_mtimes=None, old_data=None, timeout=30*60, checkevery=30):
     return algorithm_states
 
 
-def print_group_info(algorithm_states, groups):
-    g_ids, indices = np.unique(groups, return_index=True)
-    unique_states = [algorithm_states[i] for i in indices]
-    longest_key_len = 0
-    longest_val_len = 0
-    for s in unique_states:
-        for k, v in s.items():
-            if not k in ['stats', 'sensitivities', 'chkpt_dir']:
-                longest_key_len = max(longest_key_len, len(k))
-                longest_val_len = max(longest_val_len, len(str(v)))
-    format_str = '{0:' + str(longest_key_len) + 's}\t{1:' + str(longest_val_len) + 's}\n'
-    with open(os.path.join(args.monitor_dir, 'groups.info'), 'w') as f:
-        for g_id, s in enumerate(unique_states):
-            f.write('='*(len(format_str.format('0', '0'))-1) + '\n')
-            f.write(format_str.format('GROUP', str(g_id)))
-            for k, v in s.items():
-                if not k in ['stats', 'sensitivities', 'chkpt_dir']:
-                    f.write(format_str.format(k, str(v)))
-
-
 def count_down(wait=60, count_down_started_at=None, info_interval=5):
     if count_down_started_at is not None:
         seconds_remaining = int(wait - (time.time() - count_down_started_at))
@@ -251,10 +197,6 @@ def count_down(wait=60, count_down_started_at=None, info_interval=5):
         time.sleep(info_interval)
     print("Updating...              ", end='\n')
     return time.time()
-
-
-def get_checkpoint_directories(dir):
-    return [os.path.join(dir, di) for di in os.listdir(dir) if os.path.isdir(os.path.join(dir, di)) and di != 'monitoring']
 
 
 def monitor(args):
@@ -308,7 +250,7 @@ def monitor(args):
         sub_into_lists(algorithm_states, keys_to_monitor)
         # Find groups of algorithms
         groups = get_equal_dicts(algorithm_states, ignored_keys=ignored_keys)
-        print_group_info(algorithm_states, groups)
+        print_group_info(algorithm_states, groups, directory=args.monitor_dir)
 
         # Plot
         print("Creating and saving plots...")
