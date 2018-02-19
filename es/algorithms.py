@@ -70,6 +70,14 @@ class Algorithm(object):
         for _ in self.model.parameters():
             n_layers += 1
         self.sensitivities = [None]*n_layers
+        # Get inputs for sensitivity calculations by sampling from environment or
+        # getting a batch from the data loader
+        if self.safe_mutation is not None:
+            if hasattr(self.env, 'observation_space'):
+                self.sens_inputs = self.env.observation_space.sample(1000)
+            elif type(self.env) is torch.utils.data.DataLoader:
+                self.sens_inputs = next(iter(self.env))[0]
+                print(self.sens_inputs)
         # Attributes to exclude from the state dictionary
         self.exclude_from_state_dict = {'env', 'optimizer', 'lr_scheduler', 'model'}
         # Initialize dict for saving statistics
@@ -132,7 +140,7 @@ class Algorithm(object):
         if type(returns) is list:
             returns = np.array(returns)
         n = len(returns)
-        sorted_indices = np.argsort(- returns)
+        sorted_indices = np.argsort(-returns)
         u = np.zeros(n)
         for k in range(n):
             u[sorted_indices[k]] = np.max([0, np.log(n / 2 + 1) - np.log(k + 1)])
@@ -184,10 +192,10 @@ class Algorithm(object):
         Raises:
             NotImplementedError: For the SO safe mutation
             ValueError: For an unrecognized safe mutation
-        """
+        """ 
         # Forward pass on input batch
         if type(inputs) is not Variable:
-            inputs = Variable(torch.from_numpy(inputs))
+            inputs = Variable(inputs)
         if self.cuda:
             inputs = inputs.cuda()
             self.model.cuda()
@@ -542,6 +550,7 @@ class ES(Algorithm):
 
     def weight_gradient_update(self, retrn, eps):
         return 1 / (self.perturbations * self.sigma) * (retrn * eps)
+        # return self.sigma / self.perturbations * (retrn * eps)
 
     def beta_gradient_update(self, retrn, eps):
         return 1 / (self.perturbations * self.beta.exp()) * retrn * (eps.pow(2).sum() - 1)
@@ -583,6 +592,7 @@ class ES(Algorithm):
             # IPython.embed()
             # if not hasattr(param.grad, 'data'):
             #     param.grad.data = torch.zeros(param.size())
+            # print(weight_gradients[layer].norm())
             param.grad.data = - weight_gradients[layer]
             assert not np.isnan(param.grad.data).any()
             assert not np.isinf(param.grad.data).any()
@@ -617,12 +627,12 @@ class ES(Algorithm):
 
         # Evaluate parent model
         # TODO: This can be removed if we sample observations instead 
-        unperturbed_out = self.eval_fun(self.model.cpu(), self.env, 'dummy_seed', collect_inputs=1000, max_episode_length=self.batch_size)
+        # unperturbed_out = self.eval_fun(self.model.cpu(), self.env, 'dummy_seed', collect_inputs=1000, max_episode_length=self.batch_size)
 
         # Start training loop
         for n_generation in range(start_generation, self.max_generations):
             # Compute parent model weight-output sensitivities
-            self.compute_sensitivities(unperturbed_out['inputs'])
+            self.compute_sensitivities(self.sens_inputs)
 
             # Generate random seeds
             seeds = torch.LongTensor(int(self.perturbations/((not self.no_antithetic) + 1))).random_()
@@ -633,7 +643,7 @@ class ES(Algorithm):
             workers_start_time = time.time()
             kwargs = {'max_episode_length': self.batch_size}
             workers_out = pool.map_async(partial(self.eval_wrap, payload=kwargs), seeds, chunksize=10)
-            unperturbed_out = pool.apply_async(self.eval_fun, (self.model, self.env, 'dummy_seed'), {'max_episode_length': self.batch_size, 'collect_inputs': True})
+            unperturbed_out = pool.apply_async(self.eval_fun, (self.model, self.env, 'dummy_seed'), {'max_episode_length': self.batch_size})
             if "DISPLAY" in os.environ: pb.track(workers_out)
             workers_out = workers_out.get(timeout=600)
             unperturbed_out = unperturbed_out.get(timeout=600)
@@ -698,13 +708,12 @@ class ES(Algorithm):
 class NES(ES):
     def __init__(self, model, env, optimizer, lr_scheduler, eval_fun, perturbations, batch_size, max_generations, safe_mutation, no_antithetic, sigma, optimize_sigma=False, beta=None, chkpt_dir=None, chkpt_int=300, cuda=False, silent=False):
         super(NES, self).__init__(model, env, optimizer, lr_scheduler, eval_fun, perturbations, batch_size, max_generations, safe_mutation, no_antithetic, sigma, optimize_sigma=optimize_sigma, beta=beta, chkpt_dir=chkpt_dir, chkpt_int=chkpt_int, cuda=cuda, silent=silent)
-        IPython.embed()
 
     def weight_gradient_update(self, retrn, eps):
-        return self.sigma / self.perturbations * (retrn * eps)
+        return (self.sigma / self.perturbations) * (retrn * eps)
 
     def beta_gradient_update(self, retrn, eps):
-        return self.beta.exp() / (2*self.perturbations) * retrn * (eps.pow(2).sum() - 1)
+        return self.beta.exp() / (2 * self.perturbations) * retrn * (eps.pow(2).sum() - 1)
 
 
 
