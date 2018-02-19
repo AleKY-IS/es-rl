@@ -63,9 +63,9 @@ FOO=${TIME_LIMIT:="24:00"}
 ID="E008-P-LR"
 COMMON_IN="--id ${ID} --algorithm ES --optimizer SGD --lr-scheduler ExponentialLR --gamma 0.99970 --env-name MNIST --max-generations 10000 --batch-size 500 --safe-mutation SUM"
 declare -a INPUTS=(
-				   "$COMMON_IN --lr 0.01 --perturbations 40"
 				   "$COMMON_IN --lr 0.015 --perturbations 40"
 				   "$COMMON_IN --lr 0.02 --perturbations 40"
+				   "$COMMON_IN --lr 0.025 --perturbations 40"
 				   "$COMMON_IN --lr 0.06 --perturbations 300"
 				   "$COMMON_IN --lr 0.08 --perturbations 300"
 				   "$COMMON_IN --lr 0.1 --perturbations 300"
@@ -76,7 +76,7 @@ REPEATS=5
 
 # Monitorer
 TOTAL_TIME="100:00"
-MONITORER_INPUTS="-d $ID -i 600 -c"
+MONITORER_INPUTS="-d $ID -t 600 -c"
 
 # Prompt user to verify correctness
 echo "The job submissions will look like this:"

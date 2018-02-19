@@ -71,7 +71,7 @@ REPEATS=15
 
 # Monitorer
 TOTAL_TIME="100:00"
-MONITORER_INPUTS="-d $ID -i 120 -c"
+MONITORER_INPUTS="-d $ID -t 120 -c"
 
 # Prompt user to verify correctness
 echo "The job submissions will look like this:"
