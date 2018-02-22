@@ -45,3 +45,13 @@ def get_parent(directory, parent_folder_name):
             parent_directory.append(d)
             break
     return os.path.join(*parent_directory)
+
+
+def longest_common_suffix(list_of_paths):
+    reversed_paths = [os.path.join(*s.split(os.sep)[::-1]) for s in list_of_paths]
+    reversed_lcs = os.path.commonprefix(reversed_paths)
+    lcs = os.path.join(*reversed_lcs.split(os.sep)[::-1])
+    if lcs:
+        return os.path.join(os.sep, lcs)
+    else:
+        return None
