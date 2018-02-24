@@ -4,24 +4,24 @@ import os
 import pickle
 import platform
 
+import gym
 import IPython
 import numpy as np
-
-import gym
 import torch
+import torch.multiprocessing as mp
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+from torch.autograd import Variable
+
 from context import es, utils
 from es.algorithms import ES, NES
 from es.envs import create_atari_env
 from es.eval_funs import (gym_render, gym_rollout, gym_test, supervised_eval,
                           supervised_test)
 from es.models import DQN, FFN, MNISTNet, MujocoFFN
-from torch.autograd import Variable
 from torchvision import datasets, transforms
 from utils.misc import get_inputs_from_dict, get_inputs_from_dict_class
-
 
 # TODO: Get these from modules
 supervised_datasets = ['MNIST', 'FashionMNIST']
@@ -47,18 +47,26 @@ def parse_inputs():
         0.99977     10%
 
     MNIST settings
-        --optimizer SGD --lr 0.015 --gamma 0.99970 --perturbations 40 --sigma 0.05
-        --optimizer SGD --lr 0.080 --gamma 0.99970 --perturbations 300 --sigma 0.05
+        --algorithm ES --optimizer SGD --lr 0.020 --gamma 0.99970 --perturbations 40 --sigma 0.05
+        --algorithm ES --optimizer SGD --lr 0.050 --gamma 0.99970 --perturbations 100 --sigma 0.05
+        --algorithm ES --optimizer SGD --lr 0.080 --gamma 0.99970 --perturbations 300 --sigma 0.05
+        --algorithm ES --optimizer SGD --lr 0.200 --gamma 0.99970 --perturbations 1000 --sigma 0.05
+
+        --algorithm NES --optimizer SGD --lr 30 --gamma 0.99970 --perturbations 40 --sigma 0.05
+        
 
     """
+    sigma_choices = ['None', 'single', 'diagonal-layers', 'diagonal-model', 'full-layer', 'full-model']
+    sm_choices = ['None', 'ABS', 'SUM', 'SO', 'R']
+
     parser = argparse.ArgumentParser(description='Experiments')
     # Algorithm
     parser.add_argument('--algorithm', type=str, default='ES', metavar='ALG', help='Model name in es.models')
     parser.add_argument('--perturbations', type=int, default=40, metavar='N', help='Number of perturbed models to make; must be even')
     parser.add_argument('--sigma', type=float, default=0.05, metavar='SD', help='Initial noise standard deviation')
-    parser.add_argument('--optimize-sigma', action='store_true', help='Boolean to denote whether or not to optimize sigma')
+    parser.add_argument('--optimize-sigma', type=str, default='None', choices=sigma_choices, metavar='OS', help='Which type of covariance matrix parameterization to use')
     parser.add_argument('--no-antithetic', action='store_true', help='Boolean to not to use antithetic sampling')
-    parser.add_argument('--safe-mutation', type=str, default='SUM', choices=['None', 'ABS', 'SUM', 'SO', 'R'], help='String denoting the type of safe mutations to use')
+    parser.add_argument('--safe-mutation', type=str, default='SUM', choices=sm_choices, help='String denoting the type of safe mutations to use')
     parser.add_argument('--batch-size', type=int, default=1000, metavar='BS', help='Batch size agent evaluation (max episode steps for RL setting rollouts)')
     parser.add_argument('--max-generations', type=int, default=7500, metavar='MG', help='Maximum number of generations')
     # Environment
@@ -84,7 +92,8 @@ def parse_inputs():
     parser.add_argument('--milestones', type=list, default=50, help='Milestones on which to lower learning rate[MultiStepLR]')
     parser.add_argument('--step-size', type=int, default=50, help='Step interval on which to lower learning rate[StepLR]')
     # Execution
-    parser.add_argument('--chkpt-int', type=int, default=300, help='Interval in seconds for saving checkpoints')
+    parser.add_argument('--workers', type=int, default=mp.cpu_count(), help='Interval in seconds for saving checkpoints')
+    parser.add_argument('--chkpt-int', type=int, default=1800, help='Interval in seconds for saving checkpoints')
     parser.add_argument('--test', action='store_true', help='Test the model (accuracy or env render), no training')
     parser.add_argument('--id', type=str, default='test', metavar='ID', help='ID of the this run. Appended as folder to path as checkpoints/<ID>/ if not empty')
     parser.add_argument('--restore', type=str, default='', metavar='RES', help='Checkpoint from which to restore')
@@ -105,9 +114,11 @@ def validate_inputs(args):
     assert not args.test or (args.test and args.restore)                # Testing requires restoring a model
     assert not args.cuda or (args.cuda and torch.cuda.is_available())   # Can only use CUDA if avaiable
 
-    if args.safe_mutation == 'None':
-        args.safe_mutation = None
-
+    # Convert None strings to NoneType
+    for a, v in args.__dict__.items():
+        if v == 'None':
+            args.__dict__[a] = None
+    
     # Determine supervised/reinforcement learning problem
     if args.env_name in gym.envs.registry.env_specs.keys():
         args.is_supervised = False
@@ -210,7 +221,14 @@ def create_algorithm(args):
 def create_checkpoint(args):
     # Create checkpoint directory if not restoring
     timestamp = datetime.datetime.now().strftime("%y%m%d-%H%M%S.%f")
-    args.chkpt_dir = os.path.join(args.file_path, 'checkpoints', args.id, '{:s}-{:s}'.format(args.env_name, timestamp))
+    AlgorithmClass = getattr(es.algorithms, args.algorithm)
+    algorithm_input_dict = get_inputs_from_dict_class(AlgorithmClass, vars(args), recursive=True)
+    # exclude_keys = ['chkpt_int','chkpt_dir','env','eval_fun','lr_scheduler','model','optimizer','silent']
+    # include_keys = sorted(list(set(algorithm_input_dict.keys()).difference(exclude_keys)))
+    info_str = str(args.algorithm) + '|' + args.env_name + '|' + args.model.__class__.__name__
+    # for k in include_keys:
+    #     info_str += '|' + str(k) + '-' + str(algorithm_input_dict[k])
+    args.chkpt_dir = os.path.join(args.file_path, 'checkpoints', args.id, '{:s}|{:s}'.format(info_str, timestamp))
     if not os.path.exists(args.chkpt_dir):
         os.makedirs(args.chkpt_dir)
 
@@ -272,8 +290,8 @@ if __name__ == '__main__':
         args.algorithm.load_checkpoint(args.restore, load_best=args.test)
         args.chkpt_dir = args.restore
     
-    # # Set number of OMP threads for CPU computations
-    # # NOTE: This is needed for my personal stationary Linux PC for partially unknown reasons
+    # Set number of OMP threads for CPU computations
+    # NOTE: This is needed for my personal stationary Linux PC for partially unknown reasons
     # if platform.system() == 'Linux':
     #     torch.set_num_threads(1)
 
