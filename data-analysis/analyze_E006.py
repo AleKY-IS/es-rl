@@ -99,21 +99,21 @@ fig, ax = plt.subplots()
 bars = ax.errorbar(associated_bs_linear, mean_of_stds_per_bs_linear, yerr=std_of_stds_per_bs_linear, fmt='o')
 plt.xlabel('Batch size')
 plt.ylabel('Loss function variance')
-plt.savefig(os.path.join(args.d,'E006-loss-variance-vs-batch-size-01.pdf'))
+plt.savefig(os.path.join(args.d,'E006-loss-variance-vs-batch-size-01.pdf'), bbox_inches='tight')
 
 fig, ax = plt.subplots()
 ax.errorbar(associated_bs_log, mean_of_stds_per_bs_log, yerr=std_of_stds_per_bs_log, fmt='o')
 plt.xlabel('Batch size')
 plt.ylabel('Loss function variance')
 ax.set_xscale('log')
-plt.savefig(os.path.join(args.d,'E006-loss-variance-vs-batch-size-02.pdf'))
+plt.savefig(os.path.join(args.d,'E006-loss-variance-vs-batch-size-02.pdf'), bbox_inches='tight')
 
 fig, ax = plt.subplots()
 ax.errorbar(associated_bs, mean_of_stds_per_bs, yerr=std_of_stds_per_bs, fmt='o')
 plt.xlabel('Batch size')
 plt.ylabel('Loss function variance')
 ax.set_xscale('log')
-plt.savefig(os.path.join(args.d,'E006-loss-variance-vs-batch-size-03.pdf'))
+plt.savefig(os.path.join(args.d,'E006-loss-variance-vs-batch-size-03.pdf'), bbox_inches='tight')
 
 # Labels for Pareto plot
 bss = [1, 4, 10, 64, 256, 1024, 2048]
@@ -133,7 +133,7 @@ plt.title('Pareto front')
 ax.set_xscale('log')
 for t, (x, y) in zip(text, xy):
     ax.annotate(t, xy=(x, y), xytext=(x*1.1, y*1.1))
-plt.savefig(os.path.join(args.d,'E006-loss-variance-vs-batch-size-04.pdf'))
+plt.savefig(os.path.join(args.d,'E006-loss-variance-vs-batch-size-04.pdf'), bbox_inches='tight')
 
 fig, ax = plt.subplots()
 ax.errorbar(mean_of_parallel_fractions, mean_of_stds_per_bs, xerr=std_of_parallel_fractions, yerr=std_of_stds_per_bs, fmt='.')
@@ -142,7 +142,7 @@ plt.ylabel('Loss function variance')
 plt.title('Pareto front')
 for t, (x, y) in zip(text, xy):
     ax.annotate(t, xy=(x, y), xytext=(x*1.1, y*1.1))
-plt.savefig(os.path.join(args.d,'E006-loss-variance-vs-batch-size-05.pdf'))
+plt.savefig(os.path.join(args.d,'E006-loss-variance-vs-batch-size-05.pdf'), bbox_inches='tight')
 
 
 IPython.embed()

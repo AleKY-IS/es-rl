@@ -72,7 +72,7 @@ for k in ['return_unp', 'return_avg', 'return_min', 'return_max']:
     groups_longest_series = groups[indices]
 
     plot.timeseries_median_grouped(list_of_genera, list_of_series, groups_longest_series, xlabel='generations', ylabel=k)
-    plt.savefig(os.path.join(save_dir, 'analysis-01-' + k + '.pdf'))
+    plt.savefig(os.path.join(save_dir, 'analysis-01-' + k + '.pdf'), bbox_inches='tight')
     plt.close()
 
 IPython.embed()
