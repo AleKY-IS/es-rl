@@ -10,9 +10,12 @@ class ProgressBar(object):
         self.title = title
         self._c = 7  # Lenth of the "[] xxx%" part of printed string
         if bar_width is None:
-            try:
-                _, bar_width = os.popen('stty size', 'r').read().split()
-            except Exception:
+            if "DISPLAY" in os.environ:
+                try:
+                    _, bar_width = os.popen('stty size', 'r').read().split()
+                except:
+                    bar_width = 10 + len(title) + self._c
+            else:
                 bar_width = 10 + len(title) + self._c
         self._w = int(bar_width) - len(self.title) - self._c  # Subtract constant parts of string length
         assert self._w >= 0, 'Title too long, bar width too narrow or terminal window not wide enough'
