@@ -60,7 +60,7 @@ def load_data(checkpoint_directories, old_mtimes=None, old_data=None, best=False
             if i_file + 1 != n_files:
                 print(f.format(i_file + 1, n_files), end='\r')
         except Exception:
-            s += "    Required files not (yet) present in: " + chkpt_dir + "\n"     
+            s += "    Required files not (yet) present in: " + chkpt_dir + "\n"
 
     # Remove any None
     algorithm_states_list = [s for s in algorithm_states_list if s is not None]
@@ -90,19 +90,19 @@ def create_plots(args, algorithm_states, keys_to_monitor, groups):
         list_of_genera = [s['stats']['generations'] for s in algorithm_states]
 
         plot.timeseries(list_of_genera, list_of_series, xlabel='generations', ylabel=k)
-        plt.savefig(os.path.join(args.monitor_dir, 'all-gen-' + k + "-series" + '.pdf'))
+        plt.savefig(os.path.join(args.monitor_dir, 'all-gen-' + k + "-series" + '.pdf'), bbox_inches='tight')
         plt.close()
 
         plot.timeseries_distribution(list_of_genera, list_of_series, xlabel='generations', ylabel=k)
-        plt.savefig(os.path.join(args.monitor_dir, 'all-gen-' + k + "-distribution" + '.pdf'))
+        plt.savefig(os.path.join(args.monitor_dir, 'all-gen-' + k + "-distribution" + '.pdf'), bbox_inches='tight')
         plt.close()
 
         plot.timeseries_median(list_of_genera, list_of_series, xlabel='generations', ylabel=k)
-        plt.savefig(os.path.join(args.monitor_dir, 'all-gen-' + k + "-median" + '.pdf'))
+        plt.savefig(os.path.join(args.monitor_dir, 'all-gen-' + k + "-median" + '.pdf'), bbox_inches='tight')
         plt.close()
 
         plot.timeseries_final_distribution(list_of_series, label=k, ybins=len(list_of_series)*10)
-        plt.savefig(os.path.join(args.monitor_dir, 'all-final-distribution-' + k + '.pdf'))
+        plt.savefig(os.path.join(args.monitor_dir, 'all-final-distribution-' + k + '.pdf'), bbox_inches='tight')
         plt.close()
 
         # Subset only those series that are done (or the one that is the longest)
@@ -112,7 +112,7 @@ def create_plots(args, algorithm_states, keys_to_monitor, groups):
         list_of_longest_genera = [list_of_genera[i] for i in indices]
         groups_longest_series = groups[indices]
         plot.timeseries_median_grouped(list_of_longest_genera, list_of_longest_series, groups_longest_series, xlabel='generations', ylabel=k)
-        plt.savefig(os.path.join(args.monitor_dir, 'all-gen-' + k + '-series-mean-sd' + '.pdf'))
+        plt.savefig(os.path.join(args.monitor_dir, 'all-gen-' + k + '-series-mean-sd' + '.pdf'), bbox_inches='tight')
         plt.close()
 
         if len(unique_groups) > 1:
@@ -125,19 +125,19 @@ def create_plots(args, algorithm_states, keys_to_monitor, groups):
                 list_of_genera = [s['stats']['generations'] for s in group_alg_states]
 
                 plot.timeseries(list_of_genera, list_of_series, xlabel='generations', ylabel=k)
-                plt.savefig(os.path.join(args.monitor_dir, 'group-' + gstr + '-gen-' + k + "-series" + '.pdf'))
+                plt.savefig(os.path.join(args.monitor_dir, 'group-' + gstr + '-gen-' + k + "-series" + '.pdf'), bbox_inches='tight')
                 plt.close()
 
                 plot.timeseries_distribution(list_of_genera, list_of_series, xlabel='generations', ylabel=k)
-                plt.savefig(os.path.join(args.monitor_dir, 'group-' + gstr + '-gen-' + k + "-distribution" + '.pdf'))
+                plt.savefig(os.path.join(args.monitor_dir, 'group-' + gstr + '-gen-' + k + "-distribution" + '.pdf'), bbox_inches='tight')
                 plt.close()
 
                 plot.timeseries_median(list_of_genera, list_of_series, xlabel='generations', ylabel=k)
-                plt.savefig(os.path.join(args.monitor_dir, 'group-' + gstr + '-gen-' + k + "-median" + '.pdf'))
+                plt.savefig(os.path.join(args.monitor_dir, 'group-' + gstr + '-gen-' + k + "-median" + '.pdf'), bbox_inches='tight')
                 plt.close()
 
                 plot.timeseries_final_distribution(list_of_series, label=k, ybins=len(list_of_series)*10)
-                plt.savefig(os.path.join(args.monitor_dir, 'group-' + gstr + '-final-distribution-' + k + '.pdf'))
+                plt.savefig(os.path.join(args.monitor_dir, 'group-' + gstr + '-final-distribution-' + k + '.pdf'), bbox_inches='tight')
                 plt.close()
 
         if i_key + 1 == n_keys:
@@ -152,12 +152,12 @@ def wait_for_updates(args, last_refresh, max_chkpt_int, mtimes_last):
     If no updates are seen after waiting more than the maximum checkpoint
     interval, returns False. Otherwise returns True.
     """
-    print("Waiting 'max checkpoint interval' + 10% = " + str(int(max_chkpt_int*1.1)) + " seconds before checking for updates...")
-    count_down(count_down_started_at=last_refresh, wait=max_chkpt_int*1.1)
+    print("Waiting 'max checkpoint interval' x 2 = " + str(int(max_chkpt_int * 2)) + " seconds before checking for updates...")
+    count_down(count_down_started_at=last_refresh, wait=max_chkpt_int * 2)
     checkpoint_directories = get_checkpoint_directories(args.d)
     mtimes = fs.get_modified_times(checkpoint_directories, 'state-dict-algorithm.pkl')
     if mtimes == mtimes_last:
-        print("Monitoring stopped since loaded data did not change for " + str(int(max_chkpt_int*1.1)) + " seconds.")
+        print("Monitoring stopped since loaded data did not change for " + str(int(max_chkpt_int*2)) + " seconds.")
         return True
     return False
 
@@ -205,9 +205,10 @@ def monitor(args):
     package_root_this_file = fs.get_parent(this_file_dir_local, 'es-rl')
 
     # Get directory to monitor
-    if not os.path.isabs(args.d):
-        chkpt_dir = os.path.join(package_root_this_file, 'experiments', 'checkpoints')
-        args.d = os.path.join(chkpt_dir, args.d)
+    if not args.d:
+        args.d = os.path.join(package_root_this_file, 'experiments', 'checkpoints', args.i)
+    elif not os.path.isabs(args.d):
+        args.d = os.path.join(package_root_this_file, 'experiments', 'checkpoints', args.d)
     if not os.path.exists(args.d):
         os.mkdir(args.d)
     package_root_monitored_directory = fs.get_parent(args.d, 'es-rl')
@@ -237,7 +238,7 @@ def monitor(args):
         assert os.path.exists(token_file)
         dbx = db.get_dropbox_client(token_file)
 
-    ignored_keys = {'chkpt_dir', 'stats', 'sensitivities'}
+    ignored_keys = {'chkpt_dir', 'stats', 'sensitivities', 'sens_inputs'}
     for s in algorithm_states:
         if s['optimize_sigma']:
             ignored_keys.add('sigma')
@@ -264,7 +265,7 @@ def monitor(args):
         # Upload results to dropbox
         if args.c:
             # db.upload_directory(dbx, args.monitor_dir, args.dbx_dir)
-            db.upload_directory(dbx, args.d, args.dbx_dir)
+            db.upload_directory(dbx, args.d, args.dbx_dir, upload_older_files=False)
 
         # Break condition
         if wait_for_updates(args, last_refresh, get_max_chkpt_int(algorithm_states), mtimes):
@@ -281,6 +282,7 @@ if __name__ == '__main__':
     # Parse inputs
     parser = argparse.ArgumentParser(description='Monitorer')
     parser.add_argument('-d', type=str, metavar='--directory', help='The directory of checkpoints to monitor.')
+    parser.add_argument('-i', type=str, metavar='--identifier', help='The identifier of the checkpoints to monitor.')
     parser.add_argument('-t', type=int, metavar='--timeout', default=30, help='If no files are modified during a period of timeout minutes, monitoring is stopped.')
     parser.add_argument('-c', action='store_true', help='Copying of monitor directory to dropbox.')
     parser.add_argument('-s', action='store_true', help='Silent mode.')
@@ -288,6 +290,8 @@ if __name__ == '__main__':
 
     if args.s:
         sys.stdout = open(os.devnull, 'w')
+    
+    assert args.d or args.i, "Must specify directory or identifier of checkpoints to monitor"
 
     # Colormap
     # plt.rcParams['image.cmap'] = 'magma'
@@ -308,7 +312,7 @@ LINUX
 python monitor.py -d ~/mnt/Documents/es-rl/experiments/checkpoints/E001-SM/ -c
 
 MAC
-python monitor.py -d /Users/Jakob/mnt/Documents/es-rl/experiments/checkpoints/ES001-SM/ -c
+python monitor.py -d /Users/Jakob/mnt/Documents/es-rl/experiments/checkpoints/E001-SM/ -c
 
 python monitor.py -d sftp://s132315@login.hpc.dtu.dk/zhome/c2/b/86488/Documents/es-rl/experiments/checkpoints/E001-SM
 """
