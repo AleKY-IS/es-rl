@@ -3,13 +3,14 @@ import os
 
 
 def print_group_info(algorithm_states, groups, directory):
-    g_ids, indices = np.unique(groups, return_index=True)
+    omit_keys = ['stats', 'sensitivities', 'sens_inputs', 'chkpt_dir', 'chkpt_int', 'cuda', 'exclude_from_state_dict']
+    _, indices = np.unique(groups, return_index=True)
     unique_states = [algorithm_states[i] for i in indices]
     longest_key_len = 0
     longest_val_len = 0
     for s in unique_states:
         for k, v in s.items():
-            if not k in ['stats', 'sensitivities', 'chkpt_dir']:
+            if not k in omit_keys:
                 longest_key_len = max(longest_key_len, len(k))
                 longest_val_len = max(longest_val_len, len(str(v)))
     format_str = '{0:' + str(longest_key_len) + 's}\t{1:' + str(longest_val_len) + 's}\n'
@@ -18,7 +19,7 @@ def print_group_info(algorithm_states, groups, directory):
             f.write('='*(len(format_str.format('0', '0'))-1) + '\n')
             f.write(format_str.format('GROUP', str(g_id)))
             for k, v in s.items():
-                if not k in ['stats', 'sensitivities', 'chkpt_dir']:
+                if not k in omit_keys:
                     f.write(format_str.format(k, str(v)))
 
 
