@@ -56,7 +56,7 @@ def parse_inputs():
         
 
     """
-    sigma_choices = ['None', 'single', 'diagonal-layers', 'diagonal-model', 'full-layer', 'full-model']
+    sigma_choices = ['None', 'single', 'per-layer', 'per-weight']
     sm_choices = ['None', 'ABS', 'SUM', 'SO', 'R']
 
     parser = argparse.ArgumentParser(description='Experiments')
