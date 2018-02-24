@@ -21,8 +21,9 @@ def get_equal_dicts(ds, ignored_keys=None):
     Returns:
         np.array: Array of group indices.
     """
-    assert len(ds) >= 2, "The list must have at least two elements"
     groups = np.zeros(len(ds), dtype=int)
+    if len(ds) == 1:
+        return groups
     match = False
     for i, d in enumerate(ds[1:]):
         i += 1
