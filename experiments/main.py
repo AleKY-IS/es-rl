@@ -15,7 +15,7 @@ import torch.optim as optim
 from torch.autograd import Variable
 
 from context import es, utils
-from es.algorithms import ES, NES
+from es.algorithms import sES, sNES, xNES
 from es.envs import create_atari_env
 from es.eval_funs import (gym_render, gym_rollout, gym_test, supervised_eval,
                           supervised_test)
@@ -61,7 +61,7 @@ def parse_inputs():
 
     parser = argparse.ArgumentParser(description='Experiments')
     # Algorithm
-    parser.add_argument('--algorithm', type=str, default='ES', metavar='ALG', help='Model name in es.models')
+    parser.add_argument('--algorithm', type=str, default='sES', metavar='ALG', help='Model name in es.models')
     parser.add_argument('--perturbations', type=int, default=40, metavar='N', help='Number of perturbed models to make; must be even')
     parser.add_argument('--sigma', type=float, default=0.05, metavar='SD', help='Initial noise standard deviation')
     parser.add_argument('--optimize-sigma', type=str, default='None', choices=sigma_choices, metavar='OS', help='Which type of covariance matrix parameterization to use')
@@ -221,17 +221,17 @@ def create_algorithm(args):
 def create_checkpoint(args):
     # Create checkpoint directory if not restoring
     timestamp = datetime.datetime.now().strftime("%y%m%d-%H%M%S.%f")
-    AlgorithmClass = getattr(es.algorithms, args.algorithm)
-    algorithm_input_dict = get_inputs_from_dict_class(AlgorithmClass, vars(args), recursive=True)
-    # exclude_keys = ['chkpt_int','chkpt_dir','env','eval_fun','lr_scheduler','model','optimizer','silent']
-    # include_keys = sorted(list(set(algorithm_input_dict.keys()).difference(exclude_keys)))
     info_str = str(args.algorithm) + '|' + args.env_name + '|' + args.model.__class__.__name__
-    # for k in include_keys:
-    #     info_str += '|' + str(k) + '-' + str(algorithm_input_dict[k])
     args.chkpt_dir = os.path.join(args.file_path, 'checkpoints', args.id, '{:s}|{:s}'.format(info_str, timestamp))
     if not os.path.exists(args.chkpt_dir):
         os.makedirs(args.chkpt_dir)
-
+    # AlgorithmClass = getattr(es.algorithms, args.algorithm)
+    # algorithm_input_dict = get_inputs_from_dict_class(AlgorithmClass, vars(args), recursive=True)
+    # exclude_keys = ['chkpt_int','chkpt_dir','env','eval_fun','lr_scheduler','model','optimizer','silent']
+    # include_keys = sorted(list(set(algorithm_input_dict.keys()).difference(exclude_keys)))
+    # for k in include_keys:
+    #     info_str += '|' + str(k) + '-' + str(algorithm_input_dict[k])
+ 
 
 def get_eval_funs(args):
     if args.is_rl:
