@@ -82,9 +82,9 @@ def length_of_longest(l):
     Returns:
         int: Length of longest sublist
     """
-    if not isinstance(l, list):
+    if not isinstance(l, list) and not isinstance(l, range):
         return 0
-    return max([len(l)] + [len(subl) for subl in l if isinstance(subl, list)] + [length_of_longest(subl) for subl in l])
+    return max([len(l)] + [len(subl) for subl in l if isinstance(subl, list) or isinstance(subl, range)] + [length_of_longest(subl) for subl in l])
 
 
 def get_inputs_from_dict_class(c, d, recursive=False):
@@ -105,10 +105,9 @@ def get_inputs_from_dict_class(c, d, recursive=False):
             input_dict = {**input_dict, **get_inputs_from_dict(ci.__init__, d)}
             # Call self on each of the classes' parenting classes
             for parent_c in ci.__bases__:
-                input_dict = {**input_dict, **get_inputs_from_dict(parent_c.__init__, d)}
+                input_dict = {**input_dict, **get_inputs_from_dict_class(parent_c, d, recursive=True)}
     return input_dict
         
-
 
 def get_inputs_from_dict(method, d):
     """
