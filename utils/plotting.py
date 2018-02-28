@@ -5,11 +5,14 @@ import matplotlib as mpl
 mpl.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import scipy.stats as st
 import seaborn as sns
-import pandas as pd
+import torch
 
 from utils.misc import get_longest_sublists
+
+
 
 
 def moving_average(y, window=100, center=True):
@@ -188,47 +191,53 @@ def plot_stats(stats, chkpt_dir):
     generation_times = np.diff(np.array([pstats['start_time']] + list(abs_walltimes)))
     parallel_fraction = np.array(pstats['workertimes'])/generation_times
 
+    # Tranpose sigma to ease plotting
+    if type(pstats['sigma'][0]) is torch.Tensor:
+        pstats['sigma'] = [list(s) for s in pstats['sigma']]
+        pstats['sigma'] = list(map(list, zip(*pstats['sigma'])))
+    else:
+        pstats['sigma'] = [pstats['sigma']]
+
     # NOTE: Possible x-axis are: generations, episodes, observations, walltimes
+    yscale = 'linear'
+    fig, ax = plt.subplots(figsize=figsize)
+    pltUnp, = plt.plot(pstats[x], moving_average(pstats['return_unp']), label='parent ma')
+    pltAvg, = plt.plot(pstats[x], moving_average(pstats['return_avg']), label='average ma')
+    pltMax, = plt.plot(pstats[x], moving_average(pstats['return_max']), label='max ma')
+    pltMin, = plt.plot(pstats[x], moving_average(pstats['return_min']), label='min ma')
+    plt.gca().set_prop_cycle(None)
+    pltUnpBack, = plt.plot(pstats[x], pstats['return_unp'], alpha=back_alpha, label='parent')
+    pltAvgBack, = plt.plot(pstats[x], pstats['return_avg'], alpha=back_alpha, label='average')
+    pltMaxBack, = plt.plot(pstats[x], pstats['return_max'], alpha=back_alpha, label='max')
+    pltMinBack, = plt.plot(pstats[x], pstats['return_min'], alpha=back_alpha, label='min')
+    ax.set_yscale(yscale)
+    plt.ylabel('Return')
+    plt.xlabel(x.capitalize())
+    plt.legend(handles=[pltUnp, pltAvg, pltMax, pltMin, pltUnpBack, pltAvgBack, pltMaxBack, pltMinBack])
+    fig.savefig(os.path.join(chkpt_dir, x[0:3] + '_rew_' + yscale + '.pdf'), bbox_inches='tight')
+    plt.close(fig)
 
-    for yscale in ['linear','log']:
-        fig, ax = plt.subplots(figsize=figsize)
-        pltUnp, = plt.plot(pstats[x], moving_average(pstats['return_unp']), label='parent ma')
-        pltAvg, = plt.plot(pstats[x], moving_average(pstats['return_avg']), label='average ma')
-        pltMax, = plt.plot(pstats[x], moving_average(pstats['return_max']), label='max ma')
-        pltMin, = plt.plot(pstats[x], moving_average(pstats['return_min']), label='min ma')
-        plt.gca().set_prop_cycle(None)
-        pltUnpBack, = plt.plot(pstats[x], pstats['return_unp'], alpha=back_alpha, label='parent')
-        pltAvgBack, = plt.plot(pstats[x], pstats['return_avg'], alpha=back_alpha, label='average')
-        pltMaxBack, = plt.plot(pstats[x], pstats['return_max'], alpha=back_alpha, label='max')
-        pltMinBack, = plt.plot(pstats[x], pstats['return_min'], alpha=back_alpha, label='min')
-        ax.set_yscale(yscale)
-        plt.ylabel('Return')
-        plt.xlabel(x.capitalize())
-        plt.legend(handles=[pltUnp, pltAvg, pltMax, pltMin, pltUnpBack, pltAvgBack, pltMaxBack, pltMinBack])
-        fig.savefig(os.path.join(chkpt_dir, x[0:3] + '_rew_' + yscale + '.pdf'), bbox_inches='tight')
-        plt.close(fig)
+    fig, ax = plt.subplots(figsize=figsize)
+    pltUnpS, = plt.plot(pstats[x], moving_average(pstats['return_unp']), alpha=1, label='parent ma')
+    plt.gca().set_prop_cycle(None)
+    pltUnp, = plt.plot(pstats[x], pstats['return_unp'], alpha=back_alpha, label='parent raw')
+    ax.set_yscale(yscale)
+    plt.ylabel('Return')
+    plt.xlabel(x.capitalize())
+    plt.legend(handles=[pltUnpS, pltUnp])
+    fig.savefig(os.path.join(chkpt_dir, x[0:3] + '_rew_par_' + yscale + '.pdf'), bbox_inches='tight')
+    plt.close(fig)
 
-        fig, ax = plt.subplots(figsize=figsize)
-        pltUnpS, = plt.plot(pstats[x], moving_average(pstats['return_unp']), alpha=1, label='parent ma')
-        plt.gca().set_prop_cycle(None)
-        pltUnp, = plt.plot(pstats[x], pstats['return_unp'], alpha=back_alpha, label='parent raw')
-        ax.set_yscale(yscale)
-        plt.ylabel('Return')
-        plt.xlabel(x.capitalize())
-        plt.legend(handles=[pltUnpS, pltUnp])
-        fig.savefig(os.path.join(chkpt_dir, x[0:3] + '_rew_par_' + yscale + '.pdf'), bbox_inches='tight')
-        plt.close(fig)
-
-        fig, ax = plt.subplots(figsize=figsize)
-        pltVarS, = plt.plot(pstats[x], moving_average(pstats['return_var']), label='ma')
-        plt.gca().set_prop_cycle(None)
-        pltVar, = plt.plot(pstats[x], pstats['return_var'], alpha=back_alpha, label='raw')
-        ax.set_yscale(yscale)
-        plt.ylabel('Return variance')
-        plt.xlabel('Generations')
-        plt.legend(handles=[pltVarS, pltVar])
-        fig.savefig(os.path.join(chkpt_dir, x[0:3] + '_rew_var_' + yscale + '.pdf'), bbox_inches='tight')
-        plt.close(fig)
+    fig, ax = plt.subplots(figsize=figsize)
+    pltVarS, = plt.plot(pstats[x], moving_average(pstats['return_var']), label='ma')
+    plt.gca().set_prop_cycle(None)
+    pltVar, = plt.plot(pstats[x], pstats['return_var'], alpha=back_alpha, label='raw')
+    ax.set_yscale(yscale)
+    plt.ylabel('Return variance')
+    plt.xlabel('Generations')
+    plt.legend(handles=[pltVarS, pltVar])
+    fig.savefig(os.path.join(chkpt_dir, x[0:3] + '_rew_var_' + yscale + '.pdf'), bbox_inches='tight')
+    plt.close(fig)
 
     fig = plt.figure()
     pltRankS, = plt.plot(pstats[x], moving_average(pstats['unp_rank'], window=40), label='ma')
@@ -251,10 +260,10 @@ def plot_stats(stats, chkpt_dir):
     plt.close(fig)
 
     fig = plt.figure()
-    pltVar, = plt.plot(pstats[x], pstats['sigma'], label='sigma')
+    for s in pstats['sigma']:
+        pltVar, = plt.plot(pstats[x], s)
     plt.ylabel('Sigma')
     plt.xlabel('Generations')
-    plt.legend(handles=[pltVar])
     fig.savefig(os.path.join(chkpt_dir, x[0:3] + '_sigma.pdf'), bbox_inches='tight')
     plt.close(fig)
 
