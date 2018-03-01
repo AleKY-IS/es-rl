@@ -21,9 +21,10 @@ dependencies:
 - numba             # Required by umap-learn
 - dropbox
 - seaborn
+- rope              # Code refactoring
 - pip
 - pip:
-  - gym[all]
+  - gym==0.9.5
   - universe
   - umap-learn
 prefix: /Users/Jakob/anaconda/envs/ml

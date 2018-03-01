@@ -21,19 +21,23 @@ dependencies:
 - numba             # Required by umap-learn
 - dropbox
 - seaborn
+- rope              # Code refactoring
 - pip
 - pip:
-  - gym[all]
+  - gym==0.9.5
   - universe
   - umap-learn
 prefix: /home/jakob/anaconda3/envs/ml
 
 # Requires the following packages
 # 
-#   $sudo apt-get install build-essential cmake swig libjpeg-turbo8-dev zlib1g-dev
-# 
 # build-essential       Installs gcc and g++ compilers
 # cmake                 Installs cmake tool to compile c
 # swig                  Installs swig.exe
 # libjpeg-turbo8-dev    
 # zlib1g-dev            
+#
+# Install with 
+#   $sudo apt-get install build-essential cmake swig libjpeg-turbo8-dev zlib1g-dev
+#   $sudo apt-get install golang-go
+# 
