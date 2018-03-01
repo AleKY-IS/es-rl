@@ -126,6 +126,32 @@ def get_inputs_from_dict(method, d):
     return input_dict
 
 
+def isfloat(x):
+    try:
+        a = float(x)
+    except ValueError:
+        return False
+    else:
+        return True
+
+def isint(x):
+    try:
+        a = float(x)
+        b = int(a)
+    except ValueError:
+        return False
+    else:
+        return a == b
+
+def to_numeric(v):
+    if isint(v):
+        return int(float(v))
+    elif isfloat(v):
+        return float(v)
+    else:
+        return v
+
+
 def is_nearly_equal(a, b, eps=None):
     """Compares floating point numbers
     
