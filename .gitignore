@@ -105,3 +105,6 @@ ENV/
 /experiments/checkpoints
 /experiments/saved-results
 /experiments/data
+msc/compare_floats.java
+experiments/figures/ABS.pdf
+experiments/figures/SUM.pdf
