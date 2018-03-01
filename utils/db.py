@@ -21,15 +21,50 @@ def get_dropbox_client(token_file):
     return dropbox.Dropbox(token)
 
 
+def get_writemode(mode):
+    """
+    :ivar add: Do not overwrite an existing file if there is a conflict. The
+        autorename strategy is to append a number to the file name. For example,
+        "document.txt" might become "document (2).txt".
+    :ivar overwrite: Always overwrite the existing file. The autorename strategy
+        is the same as it is for ``add``.
+    :ivar str update: Overwrite if the given "rev" matches the existing file's
+        "rev". The autorename strategy is to append the string "conflicted copy"
+        to the file name. For example, "document.txt" might become "document
+        (conflicted copy).txt" or "document (Panda's conflicted copy).txt".
+    """
+    assert mode in ['add', 'overwrite', 'update']
+    return WriteMode(mode)
+
+
 def get_modified_time(dbx, dbx_file):
-    """Returns the time at which the `dbx_file` was last modified on server side
+    """Returns the time at which the `dbx_file` was last modified on server side.
+
+    If no meta data was available (file not existing), `None` is returned.
     """
     try:
         mtime = dbx.files_get_metadata(dbx_file).server_modified.timestamp()
-    except ApiError as err:
-        _handle_ApiError(err)
+    except ApiError:
         mtime = None
     return mtime
+
+
+def retry(function, *args, max_retries=10, wait=1, **kwargs):
+    """Repeats a function call with `args` and `kwargs` a number of times, breaking
+    if it returns successfully.
+    """
+    done = False
+    i = 0
+    while not done and i < max_retries:
+        time.sleep(wait)
+        try:
+            out = function(*args, **kwargs)
+            done = True
+        except:
+            pass
+        i += 1
+    info = "Succeded after " + str(i) + " retries." if done else "Failed after " + str(i) + " retries."
+    return {'out': out, 'info': info}
 
 
 def compare_modified_times(dbx, src_files, dbx_files):
@@ -85,7 +120,7 @@ def compare_modified_times(dbx, src_files, dbx_files):
     return src_file_time, dbx_file_time
 
 
-def upload_directory(dbx, src_dir, dbx_dir, upload_older_files=True, do_parallel=True, mode=WriteMode('overwrite')):
+def upload_directory(dbx, src_dir, dbx_dir, upload_older_files=True, do_parallel=True, mode='overwrite'):
     """Copy an entire directory including all files and folders to Dropbox
     """
     print("Uploading directory to dropbox...")
@@ -94,18 +129,19 @@ def upload_directory(dbx, src_dir, dbx_dir, upload_older_files=True, do_parallel
     for src_root, src_dirs, src_files in os.walk(src_dir):
         # Create all directories in this directory
         src_dirs = [os.path.join(dbx_dir, d) for d in src_dirs]
-        create_directories(dbx, src_dirs)
+        create_directories_dbx(dbx, src_dirs)
         # Upload all files in this directory
         src_files = [os.path.join(src_root, f) for f in src_files]
         dbx_files = [os.path.join(dbx_dir, os.path.relpath(f, src_dir)) for f in src_files]
-        upload_files(dbx, src_files, dbx_files, upload_older_files=upload_older_files, do_parallel=do_parallel)
+        upload_files(dbx, src_files, dbx_files, upload_older_files=upload_older_files, do_parallel=do_parallel, mode=mode)
     print("    Uploading done")
 
 
-def upload_file(dbx, src_file, dbx_file, upload_older_file=True, max_retries=10, mode=WriteMode('overwrite')):
+def upload_file(dbx, src_file, dbx_file, upload_older_file=True, max_retries=10, mode='overwrite'):
     """Uploads a single `src_file` to the corresponding `dbx_file` in dropbox.
     """
     assert os.path.exists(src_file)
+    mode = get_writemode(mode)
     # Compare the server file time stamp with local
     if not upload_older_file:
         print("Upload file")
@@ -122,13 +158,19 @@ def upload_file(dbx, src_file, dbx_file, upload_older_file=True, max_retries=10,
             print("    Uploaded: " + dbx_file, end='\n')
         except ApiError as err:
             m = "    Failed to upload " + src_file + ": "
-            _handle_ApiError(err, message=m)
+            if err.error.is_path() and err.error.get_path().is_insufficient_space():
+                m += 'Insufficient space.'
+            elif err.error.is_path() and err.error.get_path().is_conflict():
+                if err.error.get_path().get_conflict().is_file():
+                    # File already exists and mode is not overwrite
+                    m += "Write conflict on file."
+            print(m)
         except InternalServerError as err:
-            m = "    Failed to upload " + src_file + ": "
-            _handle_InternalServerError(err, max_retries=max_retries, dbx=dbx, f=f, path=dbx_file, mode=mode, message=m)
-    
+            m = "    Failed to upload " + src_file + ": Internal server error."
+            retry(dbx.files_upload, f.read(), dbx_file, mode=mode, max_retries=10, wait=0.5)
 
-def upload_files(dbx, src_files, dbx_files, do_parallel=True, upload_older_files=True, max_retries=10, mode=WriteMode('overwrite')):
+
+def upload_files(dbx, src_files, dbx_files, do_parallel=True, upload_older_files=True, max_retries=10, mode='overwrite'):
     """Uploads a number of `src_files` to the corresponding `dbx_files` paths.
 
     The source files must exist while the dbx files may or may not exist. If they don't they will be created, if they do, 
@@ -137,14 +179,15 @@ def upload_files(dbx, src_files, dbx_files, do_parallel=True, upload_older_files
     assert len(src_files) == len(dbx_files)
     if not src_files:
         return
-    kwargs = {'upload_older_file': True, 'max_retries': max_retries, 'mode': mode}
+    # Force upload older files on per file basis, since here, check is made on batch if required, which is faster.
     if not upload_older_files:
         # Keep only files that are newest on source side
-        src_newest, _ = compare_modified_times(dbx, src_files, dbx_files)
+        src_newest, dbx_newest = compare_modified_times(dbx, src_files, dbx_files)
         src_files = [f for f, is_newest in src_newest.items() if is_newest]
-        dbx_files = [f for f, is_newest in src_newest.items() if is_newest]
+        dbx_files = [f for f, is_newest in dbx_newest.items() if is_newest]
         if not src_files:
             return
+    kwargs = {'upload_older_file': True, 'max_retries': max_retries, 'mode': mode}
     if do_parallel:
         processes = []
         for src_f, dbx_f in zip(src_files, dbx_files):
@@ -158,26 +201,19 @@ def upload_files(dbx, src_files, dbx_files, do_parallel=True, upload_older_files
             upload_file(dbx, src_f, dbx_f, **kwargs)
 
 
-def create_directory(dbx, d, max_retries=10):
+def create_directory_dbx(dbx, d, max_retries=10):
     """Creates a directory in Dropbox.
     """
     try:
         dbx.files_create_folder(d)
     except DropboxException as err:
         if err.error.is_path() and err.error.get_path().is_conflict() and err.error.get_path().get_conflict().is_folder():
-            # Folder already exists
             return
-        done = False
-        i = 0
-        while not done and i < max_retries:
-            time.sleep(1)
-            create_directory(dbx, d, max_retries=0)
-            i += 1
-        if not done:
-            raise err
+        else:
+            retry(dbx.files_create_folder, d, max_retries=max_retries)
 
 
-def create_directories(dbx, dirs, do_parallel=True, max_retries=10):
+def create_directories_dbx(dbx, dirs, do_parallel=True, max_retries=10):
     """Create a list of directories in Dropbox.
 
     If do_parallel is True, the job is executed in parallel which reduces latency.
@@ -186,67 +222,67 @@ def create_directories(dbx, dirs, do_parallel=True, max_retries=10):
     if do_parallel:
         processes = []
         for d in dirs:
-            p = mp.Process(target=create_directory, args=(dbx, d), kwargs={'max_retries': max_retries})
+            p = mp.Process(target=create_directory_dbx, args=(dbx, d), kwargs={'max_retries': max_retries})
             p.start()
             processes.append(p)
         for p in processes:
             p.join()
     else:
         for d in dirs:
-            create_directory(dbx, d, max_retries=max_retries)
+            create_directory_dbx(dbx, d, max_retries=max_retries)
 
 
-def _handle_InternalServerError(err, max_retries=10, do_raise=False, dbx=None, f=None, path=None, mode=None, message=None):
-    if message is not None: message += "Internal server error."
-    if max_retries > 0 and all(v is not None for v in [dbx, f, path, mode]):
-        done = False
-        i = 0
-        while not done and i < max_retries:
-            time.sleep(1)
-            try:
-                dbx.files_upload(f.read(), path, mode=mode)
-                done = True
-            except DropboxException:
-                pass
-            i += 1
-        if message is not None:
-            if done:
-                message += " Succeded after " + str(i) + " retries."
-            else:
-                message += " Failed after " + str(i) + " retries."
-    if message is not None: print(message)
-    if do_raise:
-        raise err
-    else:
-        return err
+# def _handle_InternalServerError(err, max_retries=10, do_raise=False, dbx=None, f=None, path=None, mode=None, message=None):
+#     if message is not None: message += "Internal server error."
+#     if max_retries > 0 and all(v is not None for v in [dbx, f, path, mode]):
+#         done = False
+#         i = 0
+#         while not done and i < max_retries:
+#             time.sleep(1)
+#             try:
+#                 dbx.files_upload(f.read(), path, mode=mode)
+#                 done = True
+#             except DropboxException:
+#                 pass
+#             i += 1
+#         if message is not None:
+#             if done:
+#                 message += " Succeded after " + str(i) + " retries."
+#             else:
+#                 message += " Failed after " + str(i) + " retries."
+#     if message is not None: print(message)
+#     if do_raise:
+#         raise err
+#     else:
+#         return err
 
 
-def _handle_ApiError(err, do_raise=False, message=None):
-    """Handles Api errors.
+# def _handle_ApiError(err, do_raise=False, message=None):
+#     """Handles Api errors.
 
-    Handles
-    - Insuffient space errors
-    - Write conflict errors
-    """
-    return err
+#     Handles
+#     - Insuffient space errors
+#     - Write conflict errors
+#     """
+#     return err
 
-    if err.error.is_path() and err.error.get_path().is_insufficient_space():
-        if message is not None: message += 'Insufficient space.'
-    elif err.error.is_path() and err.error.get_path().is_conflict():
-        if err.error.get_path().get_conflict().is_folder():
-            # Folder already exists
-            pass
-        if err.error.get_path().get_conflict().is_file():
-            # File already exists and mode is not overwrite
-            if message is not None: message += "Write conflict on file."
-    elif err.error.is_path():
-        IPython.embed()
-    elif err.user_message_text:
-        if message is not None: message += err.user_message_text
-    else:
-        if message is not None: message += err
-    if message is not None: print(message)
-    if do_raise:
-        raise err
-    else:
-        return err
+#     if err.error.is_path() and err.error.get_path().is_insufficient_space():
+#         if message is not None: message += 'Insufficient space.'
+#     elif err.error.is_path() and err.error.get_path().is_conflict():
+#         if err.error.get_path().get_conflict().is_folder():
+#             # Folder already exists
+#             pass
+#         if err.error.get_path().get_conflict().is_file():
+#             # File already exists and mode is not overwrite
+#             if message is not None: message += "Write conflict on file."
+#     elif err.error.is_path():
+#         IPython.embed()
+#     elif err.user_message_text:
+#         if message is not None: message += err.user_message_text
+#     else:
+#         if message is not None: message += err
+#     if message is not None: print(message)
+#     if do_raise:
+#         raise err
+#     else:
+#         return err
