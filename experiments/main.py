@@ -93,7 +93,8 @@ def parse_inputs():
     parser.add_argument('--step-size', type=int, default=50, help='Step interval on which to lower learning rate[StepLR]')
     # Execution
     parser.add_argument('--workers', type=int, default=mp.cpu_count(), help='Interval in seconds for saving checkpoints')
-    parser.add_argument('--chkpt-int', type=int, default=1800, help='Interval in seconds for saving checkpoints')
+    parser.add_argument('--chkpt-int', type=int, default=60, help='Interval in seconds for saving checkpoints')
+    parser.add_argument('--track-parallel', action='store_true', help='Whether to track evaluation of perturbations in each iteration')
     parser.add_argument('--test', action='store_true', help='Test the model (accuracy or env render), no training')
     parser.add_argument('--id', type=str, default='test', metavar='ID', help='ID of the this run. Appended as folder to path as checkpoints/<ID>/ if not empty')
     parser.add_argument('--restore', type=str, default='', metavar='RES', help='Checkpoint from which to restore')
@@ -222,7 +223,7 @@ def create_checkpoint(args):
     # Create checkpoint directory if not restoring
     timestamp = datetime.datetime.now().strftime("%y%m%d-%H%M%S.%f")
     info_str = str(args.algorithm) + '|' + args.env_name + '|' + args.model.__class__.__name__
-    args.chkpt_dir = os.path.join(args.file_path, 'checkpoints', args.id, '{:s}|{:s}'.format(info_str, timestamp))
+    args.chkpt_dir = os.path.join(args.file_path, 'checkpoints', args.id, '{:s}|{:s}'.format(timestamp, info_str))
     if not os.path.exists(args.chkpt_dir):
         os.makedirs(args.chkpt_dir)
     # AlgorithmClass = getattr(es.algorithms, args.algorithm)
