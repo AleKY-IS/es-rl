@@ -12,7 +12,7 @@ y_noisy = y + noise
 
 plt.ion()
 fig, ax = plt.subplots()
-ax.plot(x, y, '-')r
+ax.plot(x, y, '-')
 ax.plot(x, y_noisy, 'x')
 
 embed()
