@@ -1,8 +1,9 @@
 import os
+from ast import literal_eval
 
 import IPython
-import matplotlib as mpl
-mpl.use('Agg')
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -11,8 +12,6 @@ import seaborn as sns
 import torch
 
 from utils.misc import get_longest_sublists
-
-
 
 
 def moving_average(y, window=100, center=True):
@@ -36,17 +35,6 @@ def remove_duplicate_labels(ax):
         else:
             i +=1
     ax.legend(handles, labels)
-
-
-def subsample(data, axis=0, keep_percentage=10):
-    pass
-
-# def timeseries_single(xdata, ydata, xlabel, ylabel, plotlabel=None):
-#     fig = plt.figure()
-#     ydata = moving_average(ydata)
-#     plt.plot(xdata, ydata, label=plotlabel)
-#     plt.xlabel(xlabel)
-#     plt.ylabel(ylabel)
 
 
 def timeseries(xdatas, ydatas, xlabel, ylabel, plotlabels=None, figsize=(6.4, 4.8)):
@@ -144,7 +132,17 @@ def timeseries_median_grouped(xdatas, ydatas, groups, xlabel, ylabel, figsize=(6
     plt.xlabel(xlabel)
 
 
-def plot_stats(stats, chkpt_dir):
+def load_stats(stats_file):
+    stats = pd.read_csv(stats_file)
+    for k in stats.keys()[stats.dtypes == object]:
+        try:
+            stats[k] = stats[k].apply(literal_eval)
+        except:
+            pass
+    return stats
+
+
+def plot_stats(stats_file, chkpt_dir, wide_figure=True):
     """
     Plots training statistics
     - Unperturbed return
@@ -170,133 +168,169 @@ def plot_stats(stats, chkpt_dir):
     plt.rc('font', family='sans-serif')
     plt.rc('xtick', labelsize='x-small')
     plt.rc('ytick', labelsize='x-small')
-    figsize = (6.4, 4.8)
-    pstats = stats.copy()
-    x = 'generations'
-    back_alpha = 0.3
+    if wide_figure:
+        figsize = matplotlib.figure.figaspect(9/16)
+    else:
+        figsize = (6.4, 4.8)
+
+    # Load data
+    try:
+        stats = load_stats(stats_file)
+    except:
+        return
 
     # Invert sign on negative returns (negative returns indicate a converted minimization problem)
-    if (np.array(pstats['return_max']) < 0).all():
+    if (np.array(stats['return_max']) < 0).all():
         for k in ['return_unp', 'return_avg', 'return_min', 'return_max']:
-            pstats[k] = [-s for s in pstats[k]]
-    
-    # Only consider the first parameter group of the optimizer
-    n_groups = 1 if type(pstats['lr'][0]) is float else len(pstats['lr'][0])
-    if n_groups > 1:
-        for key in ['lr']:
-            pstats[key] = [vals_group[0] for vals_group in pstats[key]]
+            stats[k] = [-s for s in stats[k]]
 
     # Computations/Transformations
-    abs_walltimes = np.array(pstats['walltimes']) + pstats['start_time']
-    generation_times = np.diff(np.array([pstats['start_time']] + list(abs_walltimes)))
-    parallel_fraction = np.array(pstats['workertimes'])/generation_times
+    psuedo_start_time = stats['walltimes'].diff().mean()
+    # Add pseudo start time to all times
+    abs_walltimes = stats['walltimes'] + psuedo_start_time
+    # Append pseudo start time to top of series and compute differences
+    stats['time_per_generation'] = pd.concat([pd.Series(psuedo_start_time), abs_walltimes]).diff().dropna()
+    stats['parallel_fraction'] = stats['workertimes']/stats['time_per_generation']
 
-    # Tranpose sigma to ease plotting
-    if type(pstats['sigma'][0]) is torch.Tensor:
-        pstats['sigma'] = [list(s) for s in pstats['sigma']]
-        pstats['sigma'] = list(map(list, zip(*pstats['sigma'])))
-    else:
-        pstats['sigma'] = [pstats['sigma']]
+    # Compute moving averages
+    for c in stats.columns:
+        if not 'Unnamed' in c and c[-3:] != '_ma':
+            stats[c + '_ma'] = stats[c].rolling(window=100, center=True, win_type=None).mean()
+        
+    # Plot each of the columns including moving average
+    c_list = stats.columns.tolist()
+    while c_list:
+        c = c_list.pop()
+        is_unnamed = lambda c: 'Unnamed' in c
+        is_part_of_multi_series = lambda c: c.split('_')[-1].isdigit()
+        is_moving_average = lambda c: c[-3:] == '_ma'
+        if not is_unnamed(c) and not is_moving_average(c):
+            if is_part_of_multi_series(c):
+                # Find all c that are in this series
+                cis = {ci for ci in stats.columns if ci.split('_')[:-1] == c.split('_')[:-1] and not is_moving_average(c)}
+                for ci in cis.difference({c}):
+                    c_list.remove(ci)
+                cis = sorted(list(cis))
+                c = ''.join(c.split('_')[:-1])
+                # Loop over them and plot into same plot
+                fig, ax = plt.subplots(figsize=figsize)
+                for ci in cis:
+                    stats[ci].plot(ax=ax, linestyle='None', marker='.', alpha=0.2, label='_nolegend_')
+                ax.set_prop_cycle(None)
+                for ci in cis:
+                    stats[ci + '_ma'].plot(ax=ax, linestyle='-', label=ci)
+                box = ax.get_position()
+                ax.set_position([box.x0, box.y0, box.width * 0.8, box.height])
+                ax.legend(loc='center left', bbox_to_anchor=(1, 0.5))
+            else:
+                fig, ax = plt.subplots(figsize=figsize)
+                stats[c].plot(ax=ax, alpha=0.2, linestyle='None', marker='.', label='_nolegend_')
+                ax.set_prop_cycle(None)
+                stats[c + '_ma'].plot(ax=ax, linestyle='-', label='_nolegend_')
+                # ax.legend(loc='best')
+            plt.xlabel('Iteration')
+            plt.ylabel(c)
+            fig.savefig(os.path.join(chkpt_dir, c + '.pdf'), bbox_inches='tight')
+            plt.close(fig)
+        
 
-    # NOTE: Possible x-axis are: generations, episodes, observations, walltimes
-    yscale = 'linear'
-    fig, ax = plt.subplots(figsize=figsize)
-    pltUnp, = plt.plot(pstats[x], moving_average(pstats['return_unp']), label='parent ma')
-    pltAvg, = plt.plot(pstats[x], moving_average(pstats['return_avg']), label='average ma')
-    pltMax, = plt.plot(pstats[x], moving_average(pstats['return_max']), label='max ma')
-    pltMin, = plt.plot(pstats[x], moving_average(pstats['return_min']), label='min ma')
-    plt.gca().set_prop_cycle(None)
-    pltUnpBack, = plt.plot(pstats[x], pstats['return_unp'], alpha=back_alpha, label='parent')
-    pltAvgBack, = plt.plot(pstats[x], pstats['return_avg'], alpha=back_alpha, label='average')
-    pltMaxBack, = plt.plot(pstats[x], pstats['return_max'], alpha=back_alpha, label='max')
-    pltMinBack, = plt.plot(pstats[x], pstats['return_min'], alpha=back_alpha, label='min')
-    ax.set_yscale(yscale)
-    plt.ylabel('Return')
-    plt.xlabel(x.capitalize())
-    plt.legend(handles=[pltUnp, pltAvg, pltMax, pltMin, pltUnpBack, pltAvgBack, pltMaxBack, pltMinBack])
-    fig.savefig(os.path.join(chkpt_dir, x[0:3] + '_rew_' + yscale + '.pdf'), bbox_inches='tight')
-    plt.close(fig)
+    # # NOTE: Possible x-axis are: generations, episodes, observations, walltimes
+    # fig, ax = plt.subplots(figsize=figsize)
+    # pltUnp, = plt.plot(stats[x], moving_average(stats['return_unp']), label='parent ma')
+    # pltAvg, = plt.plot(stats[x], moving_average(stats['return_avg']), label='average ma')
+    # pltMax, = plt.plot(stats[x], moving_average(stats['return_max']), label='max ma')
+    # pltMin, = plt.plot(stats[x], moving_average(stats['return_min']), label='min ma')
+    # plt.gca().set_prop_cycle(None)
+    # pltUnpBack, = plt.plot(stats[x], stats['return_unp'], alpha=back_alpha, label='parent')
+    # pltAvgBack, = plt.plot(stats[x], stats['return_avg'], alpha=back_alpha, label='average')
+    # pltMaxBack, = plt.plot(stats[x], stats['return_max'], alpha=back_alpha, label='max')
+    # pltMinBack, = plt.plot(stats[x], stats['return_min'], alpha=back_alpha, label='min')
+    # plt.ylabel('Return')
+    # plt.xlabel(x.capitalize())
+    # plt.legend(handles=[pltUnp, pltAvg, pltMax, pltMin, pltUnpBack, pltAvgBack, pltMaxBack, pltMinBack])
+    # fig.savefig(os.path.join(chkpt_dir, x[0:3] + '_rew_' + '.pdf'), bbox_inches='tight')
+    # plt.close(fig)
 
-    fig, ax = plt.subplots(figsize=figsize)
-    pltUnpS, = plt.plot(pstats[x], moving_average(pstats['return_unp']), alpha=1, label='parent ma')
-    plt.gca().set_prop_cycle(None)
-    pltUnp, = plt.plot(pstats[x], pstats['return_unp'], alpha=back_alpha, label='parent raw')
-    ax.set_yscale(yscale)
-    plt.ylabel('Return')
-    plt.xlabel(x.capitalize())
-    plt.legend(handles=[pltUnpS, pltUnp])
-    fig.savefig(os.path.join(chkpt_dir, x[0:3] + '_rew_par_' + yscale + '.pdf'), bbox_inches='tight')
-    plt.close(fig)
+    # fig, ax = plt.subplots(figsize=figsize)
+    # pltUnpS, = plt.plot(stats[x], moving_average(stats['return_unp']), alpha=1, label='parent ma')
+    # plt.gca().set_prop_cycle(None)
+    # pltUnp, = plt.plot(stats[x], stats['return_unp'], alpha=back_alpha, label='parent raw')
+    # plt.ylabel('Return')
+    # plt.xlabel(x.capitalize())
+    # plt.legend(handles=[pltUnpS, pltUnp])
+    # fig.savefig(os.path.join(chkpt_dir, x[0:3] + '_rew_par_.pdf'), bbox_inches='tight')
+    # plt.close(fig)
 
-    fig, ax = plt.subplots(figsize=figsize)
-    pltVarS, = plt.plot(pstats[x], moving_average(pstats['return_var']), label='ma')
-    plt.gca().set_prop_cycle(None)
-    pltVar, = plt.plot(pstats[x], pstats['return_var'], alpha=back_alpha, label='raw')
-    ax.set_yscale(yscale)
-    plt.ylabel('Return variance')
-    plt.xlabel('Generations')
-    plt.legend(handles=[pltVarS, pltVar])
-    fig.savefig(os.path.join(chkpt_dir, x[0:3] + '_rew_var_' + yscale + '.pdf'), bbox_inches='tight')
-    plt.close(fig)
+    # fig, ax = plt.subplots(figsize=figsize)
+    # pltVarS, = plt.plot(stats[x], moving_average(stats['return_var']), label='ma')
+    # plt.gca().set_prop_cycle(None)
+    # pltVar, = plt.plot(stats[x], stats['return_var'], alpha=back_alpha, label='raw')
+    # plt.ylabel('Return variance')
+    # plt.xlabel('Generations')
+    # plt.legend(handles=[pltVarS, pltVar])
+    # fig.savefig(os.path.join(chkpt_dir, x[0:3] + '_rew_var_.pdf'), bbox_inches='tight')
+    # plt.close(fig)
 
-    fig = plt.figure()
-    pltRankS, = plt.plot(pstats[x], moving_average(pstats['unp_rank'], window=40), label='ma')
-    plt.gca().set_prop_cycle(None)
-    pltRank, = plt.plot(pstats[x], pstats['unp_rank'], alpha=back_alpha, label='raw')
-    plt.ylabel('Unperturbed rank')
-    plt.xlabel('Generations')
-    plt.legend(handles=[pltRankS, pltRank])
-    fig.savefig(os.path.join(chkpt_dir, x[0:3] + '_unprank.pdf'), bbox_inches='tight')
-    plt.close(fig)
+    # fig = plt.figure()
+    # pltRankS, = plt.plot(stats[x], moving_average(stats['unp_rank'], window=40), label='ma')
+    # plt.gca().set_prop_cycle(None)
+    # pltRank, = plt.plot(stats[x], stats['unp_rank'], alpha=back_alpha, label='raw')
+    # plt.ylabel('Unperturbed rank')
+    # plt.xlabel('Generations')
+    # plt.legend(handles=[pltRankS, pltRank])
+    # fig.savefig(os.path.join(chkpt_dir, x[0:3] + '_unprank.pdf'), bbox_inches='tight')
+    # plt.close(fig)
 
-    fig = plt.figure()
-    pltVar, = plt.plot(pstats[x], moving_average(generation_times), label='ma')
-    plt.gca().set_prop_cycle(None)
-    pltVar, = plt.plot(pstats[x], generation_times, alpha=back_alpha, label='raw')
-    plt.ylabel('Walltime per generation')
-    plt.xlabel('Generations')
-    plt.legend(handles=[pltVar])
-    fig.savefig(os.path.join(chkpt_dir, x[0:3] + '_timeper.pdf'), bbox_inches='tight')
-    plt.close(fig)
+    # fig = plt.figure()
+    # pltVar, = plt.plot(stats[x], moving_average(time_per_generation), label='ma')
+    # plt.gca().set_prop_cycle(None)
+    # pltVar, = plt.plot(stats[x], time_per_generation, alpha=back_alpha, label='raw')
+    # plt.ylabel('Walltime per generation')
+    # plt.xlabel('Generations')
+    # plt.legend(handles=[pltVar])
+    # fig.savefig(os.path.join(chkpt_dir, x[0:3] + '_timeper.pdf'), bbox_inches='tight')
+    # plt.close(fig)
 
-    fig = plt.figure()
-    for s in pstats['sigma']:
-        pltVar, = plt.plot(pstats[x], s)
-    plt.ylabel('Sigma')
-    plt.xlabel('Generations')
-    fig.savefig(os.path.join(chkpt_dir, x[0:3] + '_sigma.pdf'), bbox_inches='tight')
-    plt.close(fig)
+    # fig = plt.figure()
+    # for s in sigmas:
+    #     pltVar, = plt.plot(stats[x], s)
+    # plt.ylabel('Sigma')
+    # plt.xlabel('Generations')
+    # fig.savefig(os.path.join(chkpt_dir, x[0:3] + '_sigma.pdf'), bbox_inches='tight')
+    # plt.close(fig)
 
-    fig = plt.figure()
-    pltVar, = plt.plot(pstats[x], pstats['lr'], label='lr')
-    plt.ylabel('Learning rate')
-    plt.xlabel('Generations')
-    plt.legend(handles=[pltVar])
-    fig.savefig(os.path.join(chkpt_dir, x[0:3] + '_lr.pdf'), bbox_inches='tight')
-    plt.close(fig)
+    # fig = plt.figure()
+    # pltVar, = plt.plot(stats[x], stats['lr'], label='lr')
+    # plt.ylabel('Learning rate')
+    # plt.xlabel('Generations')
+    # plt.legend(handles=[pltVar])
+    # fig.savefig(os.path.join(chkpt_dir, x[0:3] + '_lr.pdf'), bbox_inches='tight')
+    # plt.close(fig)
 
-    fig = plt.figure()
-    pltVar, = plt.plot(pstats[x], pstats['walltimes'], label='walltime')
-    plt.ylabel('Walltime')
-    plt.xlabel('Generations')
-    plt.legend(handles=[pltVar])
-    fig.savefig(os.path.join(chkpt_dir, x[0:3] + '_time.pdf'), bbox_inches='tight')
-    plt.close(fig)
+    # fig = plt.figure()
+    # pltVar, = plt.plot(stats[x], stats['walltimes'], label='walltime')
+    # plt.ylabel('Walltime')
+    # plt.xlabel('Generations')
+    # plt.legend(handles=[pltVar])
+    # fig.savefig(os.path.join(chkpt_dir, x[0:3] + '_time.pdf'), bbox_inches='tight')
+    # plt.close(fig)
 
-    fig = plt.figure()
-    pltVar, = plt.plot(pstats[x], moving_average(pstats['workertimes']), label='worker times')
-    plt.ylabel('Worker time')
-    plt.xlabel('Generations')
-    plt.legend(handles=[pltVar])
-    fig.savefig(os.path.join(chkpt_dir, x[0:3] + '_worker_time.pdf'), bbox_inches='tight')
-    plt.close(fig)
+    # fig = plt.figure()
+    # pltVar, = plt.plot(stats[x], moving_average(stats['workertimes']), label='ma')
+    # plt.gca().set_prop_cycle(None)
+    # pltVar, = plt.plot(stats[x], stats['workertimes'], alpha=back_alpha, label='raw')
+    # plt.ylabel('Worker time')
+    # plt.xlabel('Generations')
+    # plt.legend(handles=[pltVar])
+    # fig.savefig(os.path.join(chkpt_dir, x[0:3] + '_worker_time.pdf'), bbox_inches='tight')
+    # plt.close(fig)
 
-    fig = plt.figure()
-    pltVar, = plt.plot(pstats[x], moving_average(parallel_fraction), label='ma')
-    plt.gca().set_prop_cycle(None)
-    pltVar, = plt.plot(pstats[x], parallel_fraction, alpha=back_alpha, label='raw')
-    plt.ylabel('Parallel fraction')
-    plt.xlabel('Generations')
-    plt.legend(handles=[pltVar])
-    fig.savefig(os.path.join(chkpt_dir, x[0:3] + '_parallel_fraction.pdf'), bbox_inches='tight')
-    plt.close(fig)
+    # fig = plt.figure()
+    # pltVar, = plt.plot(stats[x], moving_average(parallel_fraction), label='ma')
+    # plt.gca().set_prop_cycle(None)
+    # pltVar, = plt.plot(stats[x], parallel_fraction, alpha=back_alpha, label='raw')
+    # plt.ylabel('Parallel fraction')
+    # plt.xlabel('Generations')
+    # plt.legend(handles=[pltVar])
+    # fig.savefig(os.path.join(chkpt_dir, x[0:3] + '_parallel_fraction.pdf'), bbox_inches='tight')
+    # plt.close(fig)

@@ -3,6 +3,7 @@ import os
 import sys
 import time
 import warnings
+from ast import literal_eval
 warnings.filterwarnings("ignore")
 
 import IPython
@@ -10,6 +11,7 @@ import matplotlib as mpl
 mpl.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 
 import torch
 import context
@@ -21,7 +23,8 @@ from utils.misc import get_equal_dicts, length_of_longest
 from data_analysis import print_group_info, get_best, get_max_chkpt_int, invert_signs, get_checkpoint_directories
 
 
-def load_data(checkpoint_directories, old_mtimes=None, old_data=None, best=False):
+def load_data(checkpoint_directories, old_mtimes=None, old_states=None, old_stats=None, best=False):
+    # TODO This is a mess
     # Parse inputs
     if best:
         filename = 'state-dict-best-algorithm.pkl'
@@ -29,8 +32,9 @@ def load_data(checkpoint_directories, old_mtimes=None, old_data=None, best=False
         filename = 'state-dict-algorithm.pkl'
     n_tot_files = len(checkpoint_directories)
     if old_mtimes is not None:
+        assert old_states is not None, "If given modification times, must also get old data to overwrite"
+        assert old_stats is not None, "If given modification times, must also get old stats to overwrite"
         # Find files that have been modified
-        assert old_data is not None, "If given modification times, must also get old data to overwrite"
         mtimes = fs.get_modified_times(checkpoint_directories, filename)
         if len(mtimes)-len(old_mtimes) > 0:
             old_mtimes = np.pad(old_mtimes, (0, len(mtimes)-len(old_mtimes)), mode='constant', constant_values=0)
@@ -40,55 +44,62 @@ def load_data(checkpoint_directories, old_mtimes=None, old_data=None, best=False
         checkpoint_directories = [d for i, d in enumerate(checkpoint_directories) if is_changed[i]]
         n_files = len(checkpoint_directories)
         idxs = np.where(is_changed)[0]
-        algorithm_states_list = old_data
+        algorithm_states_list = old_states
+        stats_list = old_stats
         print("Loading " + str(n_files) + " modified files of " + str(n_tot_files) + " total files...")
     else:
         n_files = len(checkpoint_directories)
         print("Loading " + str(n_files) + " files...")
         algorithm_states_list = [None]*len(checkpoint_directories)
+        stats_list = [None]*len(checkpoint_directories)
         idxs = range(0, len(checkpoint_directories))
     # Strings and constants
     n_chars = len(str(n_files))
     f = '    {:' + str(n_chars) + 'd}/{:' + str(n_chars) + 'd} files loaded'
-    s = ""
+    text = ""
     # Loop over files to load (all or only changed ones)
     i_file = -1
     for i, chkpt_dir in zip(idxs, checkpoint_directories):
         try:
             algorithm_states_list[i] = torch.load(os.path.join(chkpt_dir, filename))
+            stats_list[i] = pd.read_csv(os.path.join(chkpt_dir, 'stats.csv'))
             i_file += 1
             if i_file + 1 != n_files:
                 print(f.format(i_file + 1, n_files), end='\r')
         except Exception:
-            s += "    Required files not (yet) present in: " + chkpt_dir + "\n"
+            text += "    Required files not (yet) present in: " + chkpt_dir + "\n"
 
     # Remove any None
     algorithm_states_list = [s for s in algorithm_states_list if s is not None]
+    stats_list = [s for s in stats_list if s is not None]
+    # Evaluate any strings as literal types
+    for s in stats_list:
+        for k in s.keys()[s.dtypes == object]:
+            s[k] = s[k].apply(literal_eval)
     print(f.format(i_file + 1, n_files), end='\n')
-    if s:
-        print(s[:-2])
-    return algorithm_states_list
+    if text:
+        print(text[:-2])
+    return algorithm_states_list, stats_list
 
 
-def sub_into_lists(algorithm_states, keys_to_monitor):
-    for s in algorithm_states:
+def sub_into_lists(stats_list, keys_to_monitor):
+    for s in stats_list:
         for k in keys_to_monitor:
-            if type(s['stats'][k][0]) is list:
-                s['stats'][k] = [vals_group[0] for vals_group in s['stats'][k]]
+            if type(s[k][0]) is list:
+                s[k] = [vals_group[0] for vals_group in s[k]]
                 if k == 'lr' and 'lr' not in s.keys():
-                    s['lr'] = s['stats'][k][0]
+                    s['lr'] = s[k][0]
 
 
-def create_plots(args, algorithm_states, keys_to_monitor, groups):
+def create_plots(args, stats_list, keys_to_monitor, groups):
     unique_groups = set(groups)
     n_keys = len(keys_to_monitor)
     n_chars = len(str(n_keys))
     f = '    {:' + str(n_chars) + 'd}/{:' + str(n_chars) + 'd} monitored keys plotted'
     for i_key, k in enumerate(keys_to_monitor):
-        
-        list_of_series = [s['stats'][k] for s in algorithm_states]
-        list_of_genera = [s['stats']['generations'] for s in algorithm_states]
-
+        list_of_series = [s[k].tolist() for s in stats_list]
+        list_of_genera = [range(len(s)) for s in stats_list]
+        # IPython.embed()
         plot.timeseries(list_of_genera, list_of_series, xlabel='generations', ylabel=k)
         plt.savefig(os.path.join(args.monitor_dir, 'all-gen-' + k + "-series" + '.pdf'), bbox_inches='tight')
         plt.close()
@@ -119,10 +130,10 @@ def create_plots(args, algorithm_states, keys_to_monitor, groups):
             for g in unique_groups:
                 gstr = '{0:02d}'.format(g)
                 g_indices = np.where(groups == g)[0]
-                group_alg_states = [algorithm_states[i] for i in g_indices]
+                group_stats = [stats_list[i] for i in g_indices]
 
-                list_of_series = [s['stats'][k] for s in group_alg_states]
-                list_of_genera = [s['stats']['generations'] for s in group_alg_states]
+                list_of_series = [s[k] for s in group_stats]
+                list_of_genera = [range(len(s)) for s in group_stats]
 
                 plot.timeseries(list_of_genera, list_of_series, xlabel='generations', ylabel=k)
                 plt.savefig(os.path.join(args.monitor_dir, 'group-' + gstr + '-gen-' + k + "-series" + '.pdf'), bbox_inches='tight')
@@ -163,15 +174,15 @@ def wait_for_updates(args, last_refresh, max_chkpt_int, mtimes_last):
 
 
 def get_keys_to_monitor(algorithm_states):
-    keys_to_monitor = set(algorithm_states[0]['stats']['do_monitor'])
+    keys_to_monitor = set(algorithm_states[0]['_do_monitor'])
     for s in algorithm_states[1:]:
-        keys_to_monitor = keys_to_monitor.intersection(set(s['stats']['do_monitor']))
+        keys_to_monitor = keys_to_monitor.intersection(set(s['_do_monitor']))
     return keys_to_monitor
 
 
-def get_data(old_mtimes=None, old_data=None, timeout=30*60, checkevery=30):
+def get_data(old_mtimes=None, old_states=None, old_stats=None, timeout=30*60, checkevery=30):
     checkpoint_directories = get_checkpoint_directories(args.d)
-    algorithm_states = load_data(checkpoint_directories, old_mtimes=old_mtimes, old_data=old_data)
+    algorithm_states = load_data(checkpoint_directories, old_mtimes=old_mtimes, old_states=old_states, old_stats=old_stats)
     # Check if any data found
     if not algorithm_states:
         print("No data found.")
@@ -179,7 +190,7 @@ def get_data(old_mtimes=None, old_data=None, timeout=30*60, checkevery=30):
         for i in range(0, timeout, checkevery):
             count_down(wait=checkevery, info_interval=1)
             checkpoint_directories = get_checkpoint_directories(args.d)
-            algorithm_states = load_data(checkpoint_directories, old_mtimes=old_mtimes, old_data=old_data)
+            algorithm_states = load_data(checkpoint_directories, old_mtimes=old_mtimes, old_states=old_states, old_stats=old_stats)
             if algorithm_states:
                 return algorithm_states
             print("{:2.2f} minutes remaining".format((timeout - i-checkevery)/60))
@@ -218,7 +229,7 @@ def monitor(args):
     last_refresh = time.time()
     checkpoint_directories = get_checkpoint_directories(args.d)
     mtimes = fs.get_modified_times(checkpoint_directories, 'state-dict-algorithm.pkl')
-    algorithm_states = get_data(timeout=args.t*60)
+    algorithm_states, stats_list = get_data(timeout=args.t*60)
     if not algorithm_states:
         print("Monitoring stopped. No data available after " + str(args.t) + " minutes.")
         return
@@ -238,7 +249,9 @@ def monitor(args):
         assert os.path.exists(token_file)
         dbx = db.get_dropbox_client(token_file)
 
-    ignored_keys = {'chkpt_dir', 'stats', 'sensitivities', 'sens_inputs'}
+    ignored_keys = ['chkpt_dir', 'sensitivities', 'sens_inputs']
+    ignored_keys.extend([k for k in algorithm_states[0].keys() if k[0] == '_'])
+    ignored_keys = set(ignored_keys)
     for s in algorithm_states:
         if s['optimize_sigma']:
             ignored_keys.add('sigma')
@@ -249,8 +262,8 @@ def monitor(args):
         # Prepare data
         print("Preparing data...")
         keys_to_monitor = get_keys_to_monitor(algorithm_states)
-        invert_signs(algorithm_states, keys_to_monitor)
-        sub_into_lists(algorithm_states, keys_to_monitor)
+        invert_signs(stats_list, keys_to_monitor)
+        sub_into_lists(stats_list, keys_to_monitor)
         # Find groups of algorithms
         groups = get_equal_dicts(algorithm_states, ignored_keys=ignored_keys)
         print_group_info(algorithm_states, groups, directory=args.monitor_dir)
@@ -258,7 +271,7 @@ def monitor(args):
         # Plot
         print("Creating and saving plots...")
         try:
-            create_plots(args, algorithm_states, keys_to_monitor, groups)
+            create_plots(args, stats_list, keys_to_monitor, groups)
         except:
             pass
 
@@ -273,7 +286,7 @@ def monitor(args):
         # Load data
         print()
         last_refresh = time.time()
-        algorithm_states = get_data(timeout=args.t*60, old_mtimes=mtimes, old_data=algorithm_states)
+        algorithm_states, stats_list = get_data(timeout=args.t*60, old_mtimes=mtimes, old_states=algorithm_states, old_stats=stats_list)
         checkpoint_directories = get_checkpoint_directories(args.d)
         mtimes = fs.get_modified_times(checkpoint_directories, 'state-dict-algorithm.pkl')
 

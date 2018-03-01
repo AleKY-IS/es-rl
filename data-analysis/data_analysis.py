@@ -3,7 +3,8 @@ import os
 
 
 def print_group_info(algorithm_states, groups, directory):
-    omit_keys = ['stats', 'sensitivities', 'sens_inputs', 'chkpt_dir', 'chkpt_int', 'cuda', 'exclude_from_state_dict']
+    omit_keys = ['sensitivities', 'sens_inputs', 'chkpt_dir', 'chkpt_int', 'cuda', 'exclude_from_state_dict']
+    omit_keys.extend([k for k in algorithm_states[0].keys() if k[0] == '_'])
     _, indices = np.unique(groups, return_index=True)
     unique_states = [algorithm_states[i] for i in indices]
     longest_key_len = 0
@@ -45,22 +46,22 @@ def get_max_chkpt_int(algorithm_states):
     return max_chkpt_int
 
 
-def invert_signs(algorithm_states, keys='all'):
+def invert_signs(stats_list, keys='all'):
     """Invert sign on negative returns.
     
     Negative returns indicate a converted minimization problem so this converts the problem 
     considered to maximization which is the standard in the algorithms.
 
     Args:
-        algorithm_states (list): [description]
+        stats_list (list): [description]
         keys (dict): [description]
     """
     if keys == 'all':
         keys = {'return_unp', 'return_max', 'return_min', 'return_avg'}
-    for s in algorithm_states:
-        if (np.array(s['stats']['return_unp']) < 0).all():
+    for s in stats_list:
+        if (np.array(s['return_unp']) < 0).all():
             for k in {'return_unp', 'return_max', 'return_min', 'return_avg'}.intersection(keys):
-                s['stats'][k] = [-retrn for retrn in s['stats'][k]]
+                s[k] = [-retrn for retrn in s[k]]
 
 
 def get_checkpoint_directories(dir):
