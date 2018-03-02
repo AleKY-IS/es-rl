@@ -822,7 +822,7 @@ class sES(Algorithm):
         if self.optimize_sigma == 'per-layer':
             n = self.model.count_layers(only_trainable=True)
             sigma_keys = ['sigma_' + str(i) for i in range(n)]
-            self._do_monitor.append(sigma_keys)
+            self._do_monitor.extend(sigma_keys)
             for k in sigma_keys:
                 self.stats[k] = []
         else:
