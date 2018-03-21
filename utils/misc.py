@@ -28,7 +28,8 @@ def get_equal_dicts(ds, ignored_keys=None):
     for i, d in enumerate(ds[1:]):
         i += 1
         for prev_i, prev_d in enumerate(ds[:i]):
-            if are_dicts_equal(d, prev_d, ignored_keys=ignored_keys):
+            is_equal = are_dicts_equal(d, prev_d, ignored_keys=ignored_keys)
+            if is_equal:
                 groups[i] = groups[prev_i]
                 match = True
                 break
@@ -51,11 +52,19 @@ def are_dicts_equal(d1, d2, ignored_keys=None):
         bool: Equality of the two dictionaries
     """
     for k1, v1 in d1.items():
-        if (ignored_keys is None or k1 not in ignored_keys) and (k1 not in d2 or d2[k1] != v1):
-            return False
+        try:
+            if (ignored_keys is None or k1 not in ignored_keys) and (k1 not in d2 or d2[k1] != v1):
+                return False
+        except RuntimeError as e:
+            raise type(e)(str(e) + '. The key was k1={}'.format(k1)).with_traceback(sys.exc_info()[2])
     for k2, v2 in d2.items():
-        if (ignored_keys is None or k2 not in ignored_keys) and (k2 not in d1):
-            return False
+        try:
+            if (ignored_keys is None or k2 not in ignored_keys) and (k2 not in d1):
+                return False
+        except RuntimeError as e:
+            raise type(e)(str(e) + '. The key was k2={}'.format(k1)).with_traceback(sys.exc_info()[2])
+        # if (ignored_keys is None or k2 not in ignored_keys) and (k2 not in d1):
+            # return False
     return True
 
 
@@ -127,6 +136,10 @@ def get_inputs_from_dict(method, d):
 
 
 def isfloat(x):
+    """Checks if x is convertible to float type.
+    If also checking if x is convertible to int type, this must be done before since
+    this implies x is also convertible to float.
+    """
     try:
         a = float(x)
     except ValueError:
@@ -135,6 +148,9 @@ def isfloat(x):
         return True
 
 def isint(x):
+    """Checks if x is convertible to int type.
+    If x is convertible to int type it is also convertible to float type.
+    """
     try:
         a = float(x)
         b = int(a)
