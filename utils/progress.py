@@ -55,7 +55,7 @@ class ProgressBar(object):
 
 class PoolProgress(object):
     def __init__(self, pool, update_interval=3, **kwargs):
-        """Monitors progress of jobs on a parallel pool
+        """Monitors progress of jobs on a python `multiprocessing` parallel pool.
         
         Args:
             pool (multiprocessing.Pool): A pool of workers
