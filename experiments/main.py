@@ -15,11 +15,10 @@ import torch.optim as optim
 from torch.autograd import Variable
 
 from context import es, utils
-from es.algorithms import sES, sNES, xNES
-from es.envs import create_atari_env
-from es.eval_funs import (gym_render, gym_rollout, gym_test, supervised_eval,
-                          supervised_test)
-from es.models import DQN, FFN, MNISTNet, MujocoFFN
+from es.algorithms import GA, ES, NES, sES, sNES, xNES
+from es.envs import create_gym_environment
+from es.eval_funs import gym_render, gym_rollout, gym_test, supervised_eval, supervised_test
+from es.models import ClassicalControlFFN, MujocoFFN, DQN, MNISTNet, MNISTNetNoBN
 from torchvision import datasets, transforms
 from utils.misc import get_inputs_from_dict, get_inputs_from_dict_class
 
@@ -46,15 +45,13 @@ def parse_inputs():
         0.99970     5%
         0.99977     10%
 
-    MNIST settings
-        --algorithm ES --optimizer SGD --lr 0.020 --gamma 0.99970 --perturbations 40 --sigma 0.05
-        --algorithm ES --optimizer SGD --lr 0.050 --gamma 0.99970 --perturbations 100 --sigma 0.05
+    Algorithm hyperparameter settings
+        --algorithm ES --optimizer SGD --lr 0.020 --cov_lr 0.2 --gamma 0.99970 --perturbations 40 --sigma 0.05
+        --algorithm ES --optimizer SGD --lr 0.050 --cov_lr 0.5 --gamma 0.99970 --perturbations 100 --sigma 0.05
+        --algorithm ES --optimizer SGD --lr 0.100 --cov_lr 1.0 --gamma 0.99970 --perturbations 100 --sigma 0.05
+        --algorithm ES --optimizer SGD --lr 0.200 --cov_lr 2.0 --gamma 0.99970 --perturbations 100 --sigma 0.05
         --algorithm ES --optimizer SGD --lr 0.080 --gamma 0.99970 --perturbations 300 --sigma 0.05
         --algorithm ES --optimizer SGD --lr 0.200 --gamma 0.99970 --perturbations 1000 --sigma 0.05
-
-        --algorithm NES --optimizer SGD --lr 30 --gamma 0.99970 --perturbations 40 --sigma 0.05
-        
-
     """
     sigma_choices = ['None', 'single', 'per-layer', 'per-weight']
     sm_choices = ['None', 'ABS', 'SUM', 'SO', 'R']
@@ -77,6 +74,7 @@ def parse_inputs():
     # Optimizer
     parser.add_argument('--optimizer', type=str, default='SGD', help='Optimizer to use')
     parser.add_argument('--lr', type=float, default=0.02, metavar='LR', help='Optimizer learning rate')
+    parser.add_argument('--cov-lr', type=float, default=None, metavar='LR_BETA', help='Optimizer learning rate for covariance parameter')
     parser.add_argument('--momentum', type=float, default=0.9, help='Optimizer momentum')
     parser.add_argument('--nesterov', action='store_true', help='Boolean to denote if optimizer momentum is Nesterov')
     parser.add_argument('--weight-decay', type=float, default=0.001, help='Optimizer L2 norm weight decay penalty')
@@ -98,6 +96,7 @@ def parse_inputs():
     parser.add_argument('--test', action='store_true', help='Test the model (accuracy or env render), no training')
     parser.add_argument('--id', type=str, default='test', metavar='ID', help='ID of the this run. Appended as folder to path as checkpoints/<ID>/ if not empty')
     parser.add_argument('--restore', type=str, default='', metavar='RES', help='Checkpoint from which to restore')
+    parser.add_argument('--use-new-algorithm', action='store_true', help='Whether to use a new algorithm setting on the restored checkpoint')
     parser.add_argument('--cuda', action='store_true', default=False, help='Enables CUDA training')
     parser.add_argument('--silent', action='store_true', help='Silence print statements during training')
     parser.add_argument('--do-permute-train-labels', action='store_true', help='Permute the training labels randomly')
@@ -173,10 +172,7 @@ def create_lr_scheduler(args):
 
 def create_environment(args):
     if args.is_rl:
-        if args.env_name == 'CartPole-v0' or args.env_name == 'CartPole-v1':
-            args.env = gym.make(args.env_name)
-        else:
-            args.env = create_atari_env(args.env_name, square_size=args.frame_size)
+        args.env = create_gym_environment(args.env_name, sqaure_size=args.frame_size)
     elif args.is_supervised:
         data_cuda_kwargs = {'num_workers': 1, 'pin_memory': True} if False else {}
         if args.env_name == 'MNIST':
@@ -283,13 +279,14 @@ if __name__ == '__main__':
     # Get functions for evaluation and testing
     get_eval_funs(args)
     # Create checkpoint
-    if not args.restore:
+    if args.restore:
+        args.chkpt_dir = args.restore
+    else:
         create_checkpoint(args)
     # Create algorithm
     create_algorithm(args)
     if args.restore:
-        args.algorithm.load_checkpoint(args.restore, load_best=args.test)
-        args.chkpt_dir = args.restore
+        args.algorithm.load_checkpoint(args.restore, load_best=False, load_algorithm=(not args.use_new_algorithm))
     
     # Set number of OMP threads for CPU computations
     # NOTE: This is needed for my personal stationary Linux PC for partially unknown reasons
