@@ -5,10 +5,24 @@ import IPython
 import numpy as np
 import scipy.stats as st
 from sklearn.metrics import confusion_matrix
+import gym
 
 import torch
 import torch.nn.functional as F
 from torch.autograd import Variable
+
+
+def get_action(actions, env):
+    if type(env.action_space) is gym.spaces.Discrete:
+        # Get index
+        action = actions.max(1)[1].data.numpy()[0]
+    elif type(env.action_space) is gym.spaces.Box:
+        # Get values
+        action = actions.data.numpy().flatten()
+        if np.prod(action.shape) == 1:
+            # Index into array
+            action = action[0]
+    return action
 
 
 def gym_rollout(model, env, random_seed, silent=False, collect_inputs=False, do_cuda=False, max_episode_length=int(1e6), **kwargs):
@@ -16,8 +30,6 @@ def gym_rollout(model, env, random_seed, silent=False, collect_inputs=False, do_
     Function to do rollouts of a policy defined by `model` in given environment
     """
     # Reset environment
-    # print("Work started")
-    # model_time = 0
     state = env.reset()
     state = Variable(torch.from_numpy(state).float(), requires_grad=True).unsqueeze(0)
     retrn = 0
@@ -29,26 +41,29 @@ def gym_rollout(model, env, random_seed, silent=False, collect_inputs=False, do_
         for d in state.size()[1:]:
             prealdim = prealdim + (d,)
         inputs = torch.zeros(prealdim)
-        
     # Rollout
     while not done and n_observations < max_episode_length:
-        # Collect states as batch inputs 
+        # Collect states as batch inputs
         if collect_inputs and collect_inputs > n_observations:
             inputs[n_observations,] = state.data
         # Choose action
         actions = model(state)
-        action = actions.max(1)[1].data.numpy()
+        action = get_action(actions, env)
         # Step
-        state, reward, done, _ = env.step(action[0])
+        state, reward, done, _ = env.step(action)
         retrn += reward
         n_observations += 1
         # Cast state
         state = Variable(torch.from_numpy(state).float(), requires_grad=True).unsqueeze(0)
-    out = {'seed': random_seed, 'return': retrn, 'observations': n_observations}
+    out = {'seed': random_seed, 'return': float(retrn), 'observations': n_observations}
     if collect_inputs:
-        if n_observations < collect_inputs:
+        if collect_inputs is not True and n_observations < collect_inputs:
+            # collect_inputs is a number and smaller than observations seens
             inputs = inputs[:n_observations,]
         out['inputs'] = inputs.numpy()
+    queue = kwargs.get('return_queue')
+    if queue:
+        queue.put(out)
     return out
 
 
@@ -68,9 +83,9 @@ def gym_render(model, env, max_episode_length):
             while not done and this_model_num_steps < max_episode_length:
                 # Choose action
                 actions = model(state)
-                action = actions.max(1)[1].data.numpy()
+                action = get_action(actions, env)
                 # Step
-                state, reward, done, _ = env.step(action[0])
+                state, reward, done, _ = env.step(action)
                 this_model_return += reward
                 this_model_num_steps += 1
                 # Cast state
@@ -97,9 +112,9 @@ def gym_test(model, env, max_episode_length, n_episodes, chkpt_dir=None, **kwarg
         while not done and this_model_num_steps < max_episode_length:
             # Choose action
             actions = model(state)
-            action = actions.max(1)[1].data.numpy()
+            action = get_action(actions, env)
             # Step
-            state, reward, done, _ = env.step(action[0])
+            state, reward, done, _ = env.step(action)
             returns[i_episode] += reward
             this_model_num_steps += 1
             # Cast state
@@ -149,6 +164,9 @@ def supervised_eval(model, train_loader, random_seed, silent=False, collect_inpu
         #   3. The background process sends the file descriptor via the unix socket.
         out['inputs'] = data.data.numpy()
         # Also print correct prediction ratio
+    queue = kwargs.get('return_queue')
+    if queue:
+        queue.put(out)
     return out
 
 
