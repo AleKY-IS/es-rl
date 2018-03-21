@@ -129,7 +129,7 @@ class AtariPreProcessorMnih2015(vectorized.ObservationWrapper):
         # f = plt.figure()
         # plt.imshow(frame)
         # f.savefig('_3grey.pdf')
-        # Fix odd-even flickering
+        # Fix odd-even flickering by maxing over last two values of each pixel
         frame = np.maximum(frame, self.previous_frames[0, ...])
         # f = plt.figure()
         # plt.imshow(frame)
