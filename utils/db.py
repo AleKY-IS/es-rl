@@ -3,6 +3,7 @@ import multiprocessing as mp
 import os
 import random
 import time
+from functools import partial
 
 import dropbox
 import IPython
@@ -74,7 +75,7 @@ def compare_modified_times(dbx, src_files, dbx_files):
     on the local side or server side with a True 
     """
     # Get dropbox files meta information all files in all unique parenting folders
-    # (This yields at max as many requests as one request per file)
+    # (This yields at max as many requests as one request per file would have made)
     parent_folders = {os.path.split(dbx_f)[0] for dbx_f in dbx_files}
     all_metas = []
     for p_folder in parent_folders:
@@ -145,7 +146,6 @@ def upload_file(dbx, src_file, dbx_file, upload_older_file=True, max_retries=10,
     # Compare the server file time stamp with local
     if not upload_older_file:
         print("Upload file")
-        IPython.embed()
         m_time_local = os.path.getmtime(src_file)
         m_time_server = get_modified_time(dbx, dbx_file)
         # If the file exists on server and has newer modification time
@@ -170,7 +170,7 @@ def upload_file(dbx, src_file, dbx_file, upload_older_file=True, max_retries=10,
             retry(dbx.files_upload, f.read(), dbx_file, mode=mode, max_retries=10, wait=0.5)
 
 
-def upload_files(dbx, src_files, dbx_files, do_parallel=True, upload_older_files=True, max_retries=10, mode='overwrite'):
+def upload_files(dbx, src_files, dbx_files, upload_older_files=True, do_parallel=True, max_retries=10, mode='overwrite'):
     """Uploads a number of `src_files` to the corresponding `dbx_files` paths.
 
     The source files must exist while the dbx files may or may not exist. If they don't they will be created, if they do, 
@@ -183,8 +183,11 @@ def upload_files(dbx, src_files, dbx_files, do_parallel=True, upload_older_files
     if not upload_older_files:
         # Keep only files that are newest on source side
         src_newest, dbx_newest = compare_modified_times(dbx, src_files, dbx_files)
-        src_files = [f for f, is_newest in src_newest.items() if is_newest]
-        dbx_files = [f for f, is_newest in dbx_newest.items() if is_newest]
+        src_files, dbx_files = [], []
+        for src_f, upload_src, dbx_f, _ in zip(*zip(*sorted(src_newest.items())), *zip(*sorted(dbx_newest.items()))):
+            if upload_src:
+                src_files.append(src_f)
+                dbx_files.append(dbx_f)
         if not src_files:
             return
     kwargs = {'upload_older_file': True, 'max_retries': max_retries, 'mode': mode}
