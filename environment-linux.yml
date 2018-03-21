@@ -5,6 +5,7 @@ channels:
 - conda-forge
 - anaconda-fusion
 - seaborn
+- kne               # pybox2d 
 dependencies:
 - python
 - numpy>=1.13       # version due to universe, due to go_vncdriver
@@ -22,22 +23,35 @@ dependencies:
 - dropbox
 - seaborn
 - rope              # Code refactoring
+- pybox2d
 - pip
 - pip:
   - gym==0.9.5
   - universe
-  - umap-learn
+  - gym[atari]
+  - gym[box2d]
+  - umap-learn      # Visualization of data
+  - pathos          # Multiprocessing based on dill (among others)
 prefix: /home/jakob/anaconda3/envs/ml
 
-# Requires the following packages
-# 
+# === REQUIRED LIBRARIES ===
 # build-essential       Installs gcc and g++ compilers
 # cmake                 Installs cmake tool to compile c
 # swig                  Installs swig.exe
 # libjpeg-turbo8-dev    
 # zlib1g-dev            
-#
+# 
 # Install with 
-#   $sudo apt-get install build-essential cmake swig libjpeg-turbo8-dev zlib1g-dev
+#   $sudo apt-get install build-essential cmake swig libjpeg-turbo8-dev zlib1g-dev python-dev swig python-pygame subversion
 #   $sudo apt-get install golang-go
 # 
+# 
+# === MUJOCO ===
+# Mujoco requires the following for installing and gym.make'ing without errors
+#   $sudo apt-get install libx11-dev
+#   $sudo apt-get install libglew-dev
+#
+# "DependencyNotInstalled: Failed to load GLFW3 shared library.." fixed with
+#   sudo cp ~/.mujoco/mjpro150/bin/libglfw.so.3 /usr/local/lib
+#
+
