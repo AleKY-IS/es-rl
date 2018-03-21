@@ -1,5 +1,35 @@
 import numpy as np
 import os
+from ast import literal_eval
+import pandas as pd
+
+
+def load_stats(stats_file):
+    stats = pd.read_csv(stats_file)
+    for k in stats.keys()[stats.dtypes == object]:
+        try:
+            stats[k] = stats[k].apply(literal_eval)
+        except:
+            pass
+    return stats
+
+
+def build_vector(stats, keys):
+    """Build a vector from a set of keys stored in stats
+
+    Relies on names thate are formatted like
+        <name>_<element index>
+    For example,
+        sigma_0
+        sigma_1
+        sigma_2
+    will create a vector of size 3 with the values stored in sigma_i for all i.
+    """
+    vec = torch.Tensor(len(stats[k]), len(keys))
+    for k in keys:
+        i = to_numeric(k.split('_')[-1])
+        vec[:,i] = stats[k]
+    return vec
 
 
 def print_group_info(algorithm_states, groups, directory):
