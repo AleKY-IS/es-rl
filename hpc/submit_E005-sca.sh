@@ -74,7 +74,7 @@ do
     for i in "${!PERTURBATIONS[@]}"
     do
         NAME="$ID-${CORES[j]}-${PERTURBATIONS[i]}"
-        INPUT="--id ${ID} --algorithm ES --optimizer SGD --lr-scheduler ExponentialLR --gamma 0.99970 --env-name MNIST --max-generations 100 --batch-size 200 --safe-mutation SUM --chkpt-int 10000 --perturbations ${PERTURBATIONS[i]} --workers ${CORES[j]}"
+        INPUT="--id ${ID} --algorithm ES --env-name MNIST --model MNISTNet --optimizer SGD --lr-scheduler ExponentialLR --gamma 0.99970 --env-name MNIST --max-generations 100 --batch-size 200 --safe-mutation SUM --chkpt-int 10000 --perturbations ${PERTURBATIONS[i]} --workers ${CORES[j]}"
 	    echo "bsub -q $QUEUE -J $NAME -W $TIME_LIMIT -n ${CORES[j]} -R "span[hosts=1] rusage[mem=6GB]" -o "$NAME.log" "sh $SCRIPT $INPUT""
     done
 done
@@ -96,7 +96,7 @@ do
 	do
 		echo ""
         NAME="$ID-${CORES[j]}-${PERTURBATIONS[i]}"
-        INPUT="--id ${ID} --algorithm ES --optimizer SGD --lr-scheduler ExponentialLR --gamma 0.99970 --env-name MNIST --max-generations 100 --batch-size 200 --safe-mutation SUM --chkpt-int 10000 --perturbations ${PERTURBATIONS[i]} --workers ${CORES[j]}"
+        INPUT="--id ${ID} --algorithm ES --env-name MNIST --model MNISTNet --optimizer SGD --lr-scheduler ExponentialLR --gamma 0.99970 --env-name MNIST --max-generations 100 --batch-size 200 --safe-mutation SUM --chkpt-int 10000 --perturbations ${PERTURBATIONS[i]} --workers ${CORES[j]}"
 	    bsub -q $QUEUE -J $NAME -W $TIME_LIMIT -n ${CORES[j]} -R "span[hosts=1] rusage[mem=6GB]" -o "$NAME.log" "sh $SCRIPT $INPUT"
 		echo "Submission : $ bsub -q $QUEUE -J $NAME -W $TIME_LIMIT -n ${CORES[j]} -R "span[hosts=1] rusage[mem=6GB]" -o "$NAME.log" "
 		echo "Script call: $SCRIPT $INPUT"
@@ -233,5 +233,3 @@ do
 	done
 done
 echo ""
-
-
