@@ -85,9 +85,9 @@ def load_data(checkpoint_directories, old_mtimes=None, old_states=None, old_stat
 def sub_into_lists(stats_list, keys_to_monitor):
     for s in stats_list:
         for k in keys_to_monitor:
-            if type(s[k][0]) is list:
+            if k in s and type(s[k][0]) is list:
                 s[k] = [vals_group[0] for vals_group in s[k]]
-                if k == 'lr' and 'lr' not in s.keys():
+                if 'lr' in k and 'lr' not in s.keys():
                     s['lr'] = s[k][0]
 
 
@@ -97,23 +97,23 @@ def create_plots(args, stats_list, keys_to_monitor, groups):
     n_chars = len(str(n_keys))
     f = '    {:' + str(n_chars) + 'd}/{:' + str(n_chars) + 'd} monitored keys plotted'
     for i_key, k in enumerate(keys_to_monitor):
-        list_of_series = [s[k].tolist() for s in stats_list]
-        list_of_genera = [range(len(s)) for s in stats_list]
-        # IPython.embed()
+        list_of_series = [s[k].tolist() for s in stats_list if k in s]
+        list_of_genera = [range(len(s)) for s in stats_list if k in s]
+
         plot.timeseries(list_of_genera, list_of_series, xlabel='generations', ylabel=k)
-        plt.savefig(os.path.join(args.monitor_dir, 'all-gen-' + k + "-series" + '.pdf'), bbox_inches='tight')
+        plt.savefig(os.path.join(args.monitor_dir, k + '-all-series.pdf'), bbox_inches='tight')
         plt.close()
 
         plot.timeseries_distribution(list_of_genera, list_of_series, xlabel='generations', ylabel=k)
-        plt.savefig(os.path.join(args.monitor_dir, 'all-gen-' + k + "-distribution" + '.pdf'), bbox_inches='tight')
+        plt.savefig(os.path.join(args.monitor_dir, k + '-all-distribution.pdf'), bbox_inches='tight')
         plt.close()
 
         plot.timeseries_median(list_of_genera, list_of_series, xlabel='generations', ylabel=k)
-        plt.savefig(os.path.join(args.monitor_dir, 'all-gen-' + k + "-median" + '.pdf'), bbox_inches='tight')
+        plt.savefig(os.path.join(args.monitor_dir, k + '-all-median.pdf'), bbox_inches='tight')
         plt.close()
 
         plot.timeseries_final_distribution(list_of_series, label=k, ybins=len(list_of_series)*10)
-        plt.savefig(os.path.join(args.monitor_dir, 'all-final-distribution-' + k + '.pdf'), bbox_inches='tight')
+        plt.savefig(os.path.join(args.monitor_dir, k + '-all-final-distribution.pdf'), bbox_inches='tight')
         plt.close()
 
         # Subset only those series that are done (or the one that is the longest)
@@ -122,8 +122,8 @@ def create_plots(args, stats_list, keys_to_monitor, groups):
         list_of_longest_series = [list_of_series[i] for i in indices]
         list_of_longest_genera = [list_of_genera[i] for i in indices]
         groups_longest_series = groups[indices]
-        plot.timeseries_median_grouped(list_of_longest_genera, list_of_longest_series, groups_longest_series, xlabel='generations', ylabel=k)
-        plt.savefig(os.path.join(args.monitor_dir, 'all-gen-' + k + '-series-mean-sd' + '.pdf'), bbox_inches='tight')
+        plot.timeseries_mean_grouped(list_of_longest_genera, list_of_longest_series, groups_longest_series, xlabel='generations', ylabel=k)
+        plt.savefig(os.path.join(args.monitor_dir, k + '-all-series-mean-sd' + '.pdf'), bbox_inches='tight')
         plt.close()
 
         if len(unique_groups) > 1:
@@ -132,24 +132,24 @@ def create_plots(args, stats_list, keys_to_monitor, groups):
                 g_indices = np.where(groups == g)[0]
                 group_stats = [stats_list[i] for i in g_indices]
 
-                list_of_series = [s[k] for s in group_stats]
-                list_of_genera = [range(len(s)) for s in group_stats]
+                list_of_series = [s[k].tolist() for s in group_stats if k in s]
+                list_of_genera = [range(len(s)) for s in group_stats if k in s]
+                if list_of_genera and list_of_series:
+                    plot.timeseries(list_of_genera, list_of_series, xlabel='generations', ylabel=k)
+                    plt.savefig(os.path.join(args.monitor_dir, k + '-group-' + gstr + '-series.pdf'), bbox_inches='tight')
+                    plt.close()
 
-                plot.timeseries(list_of_genera, list_of_series, xlabel='generations', ylabel=k)
-                plt.savefig(os.path.join(args.monitor_dir, 'group-' + gstr + '-gen-' + k + "-series" + '.pdf'), bbox_inches='tight')
-                plt.close()
+                    plot.timeseries_distribution(list_of_genera, list_of_series, xlabel='generations', ylabel=k)
+                    plt.savefig(os.path.join(args.monitor_dir, k + '-group-' + gstr + '-distribution.pdf'), bbox_inches='tight')
+                    plt.close()
 
-                plot.timeseries_distribution(list_of_genera, list_of_series, xlabel='generations', ylabel=k)
-                plt.savefig(os.path.join(args.monitor_dir, 'group-' + gstr + '-gen-' + k + "-distribution" + '.pdf'), bbox_inches='tight')
-                plt.close()
+                    plot.timeseries_median(list_of_genera, list_of_series, xlabel='generations', ylabel=k)
+                    plt.savefig(os.path.join(args.monitor_dir, k + '-group-' + gstr + '-median.pdf'), bbox_inches='tight')
+                    plt.close()
 
-                plot.timeseries_median(list_of_genera, list_of_series, xlabel='generations', ylabel=k)
-                plt.savefig(os.path.join(args.monitor_dir, 'group-' + gstr + '-gen-' + k + "-median" + '.pdf'), bbox_inches='tight')
-                plt.close()
-
-                plot.timeseries_final_distribution(list_of_series, label=k, ybins=len(list_of_series)*10)
-                plt.savefig(os.path.join(args.monitor_dir, 'group-' + gstr + '-final-distribution-' + k + '.pdf'), bbox_inches='tight')
-                plt.close()
+                    plot.timeseries_final_distribution(list_of_series, label=k, ybins=len(list_of_series)*10)
+                    plt.savefig(os.path.join(args.monitor_dir, k + '-group-' + gstr + '-final-distribution.pdf'), bbox_inches='tight')
+                    plt.close()
 
         if i_key + 1 == n_keys:
             print(f.format(i_key+1, n_keys), end='\n')
@@ -173,16 +173,21 @@ def wait_for_updates(args, last_refresh, max_chkpt_int, mtimes_last):
     return False
 
 
-def get_keys_to_monitor(algorithm_states):
-    keys_to_monitor = set(algorithm_states[0]['_do_monitor'])
-    for s in algorithm_states[1:]:
-        keys_to_monitor = keys_to_monitor.intersection(set(s['_do_monitor']))
+def get_keys_to_monitor(stats_list):
+    keys_to_monitor = {'return_unp', 'accuracy_unp', 'sigma'}
+    for s in stats_list:
+        for c in s.columns:
+            addkeys = set()
+            for k in keys_to_monitor:
+                if k in c:
+                    addkeys.add(c)
+            if addkeys: keys_to_monitor.add(*addkeys)
     return keys_to_monitor
 
 
 def get_data(old_mtimes=None, old_states=None, old_stats=None, timeout=30*60, checkevery=30):
     checkpoint_directories = get_checkpoint_directories(args.d)
-    algorithm_states = load_data(checkpoint_directories, old_mtimes=old_mtimes, old_states=old_states, old_stats=old_stats)
+    algorithm_states, stats_list = load_data(checkpoint_directories, old_mtimes=old_mtimes, old_states=old_states, old_stats=old_stats)
     # Check if any data found
     if not algorithm_states:
         print("No data found.")
@@ -190,12 +195,12 @@ def get_data(old_mtimes=None, old_states=None, old_stats=None, timeout=30*60, ch
         for i in range(0, timeout, checkevery):
             count_down(wait=checkevery, info_interval=1)
             checkpoint_directories = get_checkpoint_directories(args.d)
-            algorithm_states = load_data(checkpoint_directories, old_mtimes=old_mtimes, old_states=old_states, old_stats=old_stats)
+            algorithm_states, stats_list = load_data(checkpoint_directories, old_mtimes=old_mtimes, old_states=old_states, old_stats=old_stats)
             if algorithm_states:
-                return algorithm_states
+                return algorithm_states,  stats_list
             print("{:2.2f} minutes remaining".format((timeout - i-checkevery)/60))
         print("No data found to monitor after checking for " + str(int(timeout/60)) + " minutes.")
-    return algorithm_states
+    return algorithm_states, stats_list
 
 
 def count_down(wait=60, count_down_started_at=None, info_interval=5):
@@ -229,7 +234,7 @@ def monitor(args):
     last_refresh = time.time()
     checkpoint_directories = get_checkpoint_directories(args.d)
     mtimes = fs.get_modified_times(checkpoint_directories, 'state-dict-algorithm.pkl')
-    algorithm_states, stats_list = get_data(timeout=args.t*60)
+    algorithm_states, stats_list = get_data(timeout=args.t)
     if not algorithm_states:
         print("Monitoring stopped. No data available after " + str(args.t) + " minutes.")
         return
@@ -249,7 +254,7 @@ def monitor(args):
         assert os.path.exists(token_file)
         dbx = db.get_dropbox_client(token_file)
 
-    ignored_keys = ['chkpt_dir', 'sensitivities', 'sens_inputs']
+    ignored_keys = ['chkpt_dir', 'sensitivities', 'sens_inputs', '_weight_update_scale']
     ignored_keys.extend([k for k in algorithm_states[0].keys() if k[0] == '_'])
     ignored_keys = set(ignored_keys)
     for s in algorithm_states:
@@ -261,7 +266,7 @@ def monitor(args):
     while True:
         # Prepare data
         print("Preparing data...")
-        keys_to_monitor = get_keys_to_monitor(algorithm_states)
+        keys_to_monitor = get_keys_to_monitor(stats_list)
         invert_signs(stats_list, keys_to_monitor)
         sub_into_lists(stats_list, keys_to_monitor)
         # Find groups of algorithms
@@ -270,10 +275,10 @@ def monitor(args):
 
         # Plot
         print("Creating and saving plots...")
-        try:
-            create_plots(args, stats_list, keys_to_monitor, groups)
-        except:
-            pass
+        # try:
+        create_plots(args, stats_list, keys_to_monitor, groups)
+        # except:
+            # pass
 
         # Upload results to dropbox
         if args.c:
@@ -286,7 +291,7 @@ def monitor(args):
         # Load data
         print()
         last_refresh = time.time()
-        algorithm_states, stats_list = get_data(timeout=args.t*60, old_mtimes=mtimes, old_states=algorithm_states, old_stats=stats_list)
+        algorithm_states, stats_list = get_data(timeout=args.t, old_mtimes=mtimes, old_states=algorithm_states, old_stats=stats_list)
         checkpoint_directories = get_checkpoint_directories(args.d)
         mtimes = fs.get_modified_times(checkpoint_directories, 'state-dict-algorithm.pkl')
 
@@ -296,7 +301,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Monitorer')
     parser.add_argument('-d', type=str, metavar='--directory', help='The directory of checkpoints to monitor.')
     parser.add_argument('-i', type=str, metavar='--identifier', help='The identifier of the checkpoints to monitor.')
-    parser.add_argument('-t', type=int, metavar='--timeout', default=30, help='If no files are modified during a period of timeout minutes, monitoring is stopped.')
+    parser.add_argument('-t', type=int, metavar='--timeout', default=4000, help='If no files are modified during a period of timeout minutes, monitoring is stopped.')
     parser.add_argument('-c', action='store_true', help='Copying of monitor directory to dropbox.')
     parser.add_argument('-s', action='store_true', help='Silent mode.')
     args = parser.parse_args()
