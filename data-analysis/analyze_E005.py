@@ -5,10 +5,12 @@ import IPython
 import matplotlib.pyplot as plt
 import numpy as np
 import scipy as sp
+import pandas as pd
 
 import torch
 from context import utils
 from utils.misc import get_equal_dicts
+from data_analysis import load_stats, invert_signs
 
 
 """Script for analyzing experiment E005
@@ -31,23 +33,27 @@ parser.add_argument('-d', type=str, default=None, metavar='--directory', help='T
 args = parser.parse_args()
 
 if not args.d:
-    # args.d = "/home/jakob/mnt/Documents/es-rl/experiments/checkpoints/E005"
+    args.d = "/home/jakob/mnt/Documents/es-rl/experiments/checkpoints/E005"
     # args.d = "/home/jakob/Dropbox/es-rl/experiments/checkpoints/E005-sca"
-    args.d = "/Users/Jakob/mnt/Documents/es-rl/experiments/checkpoints/E005"
+    # args.d = "/Users/Jakob/mnt/Documents/es-rl/experiments/checkpoints/E005-sca"
+save_dir = os.path.join(args.d, 'analysis')
+if not os.path.exists(save_dir):
+    os.mkdir(save_dir)
 
 directories = [os.path.join(args.d, di) for di in os.listdir(args.d) if os.path.isdir(os.path.join(args.d, di)) and di != 'monitoring']
-filename = 'state-dict-algorithm.pkl'
 rm_filenames = ['state-dict-best-algorithm.pkl', 'state-dict-best-optimizer.pkl', 'state-dict-best-model.pkl']
 
 algorithm_states = []
+stats = []
 workers = []
 perturbations = []
 for d in directories:
     try:
-        s = torch.load(os.path.join(d, filename))
-        algorithm_states.append(s)
+        s = torch.load(os.path.join(d, 'state-dict-algorithm.pkl'))
         workers.append(s['workers'])
         perturbations.append(s['perturbations'])
+        algorithm_states.append(s)
+        stats.append(load_stats(os.path.join(d, 'stats.csv')))
         print(s['workers'], s['perturbations'])
     except:
         print("None in: " + d)
@@ -57,34 +63,39 @@ for d in directories:
     #         os.remove(os.path.join(d, rmf))
     #     except OSError:
     #         pass
+invert_signs(stats)
 workers = np.array(workers)
 perturbations = np.array(perturbations)
 
-# Get data
-abs_walltimes = [np.array(s['stats']['walltimes']) + s['stats']['start_time'] for s in algorithm_states]
-generation_times = [np.diff(np.array([s['stats']['start_time']] + list(awt))) for s, awt in zip(algorithm_states, abs_walltimes)]
-parallel_fractions = [(np.array(s['stats']['workertimes'])/gt) for s, gt in zip(algorithm_states, generation_times)]
+for s in stats:
+    # Computations/Transformations
+    psuedo_start_time = s['walltimes'].diff().mean()
+    # Add pseudo start time to all times
+    abs_walltimes = s['walltimes'] + psuedo_start_time
+    # Append pseudo start time to top of series and compute differences
+    s['time_per_generation'] = pd.concat([pd.Series(psuedo_start_time), abs_walltimes]).diff().dropna()
+    s['parallel_fraction'] = s['workertimes']/s['time_per_generation']
 
 # Compute mean and std over groups
-mean_of_times = np.array([])
-std_of_times = np.array([])
-mean_of_parallel_fractions = np.array([])
-std_of_parallel_fractions = np.array([])
+time_per_generation_means = np.array([])
+time_per_generation_stds = np.array([])
+parallel_fraction_means = np.array([])
+parallel_fraction_stds = np.array([])
 associated_bs = np.array([])
 for i in range(0, len(algorithm_states)):
-    mean_of_times = np.append(mean_of_times, np.mean(generation_times[i]))
-    std_of_times = np.append(std_of_times, np.std(generation_times[i]))
-    mean_of_parallel_fractions = np.append(mean_of_parallel_fractions, np.mean(parallel_fractions[i]))
-    std_of_parallel_fractions = np.append(std_of_parallel_fractions, np.std(parallel_fractions[i]))
+    time_per_generation_means = np.append(time_per_generation_means, np.mean(stats[i]['time_per_generation']))
+    time_per_generation_stds = np.append(time_per_generation_stds, np.std(stats[i]['time_per_generation']))
+    parallel_fraction_means = np.append(parallel_fraction_means, np.mean(stats[i]['parallel_fraction']))
+    parallel_fraction_stds = np.append(parallel_fraction_stds, np.std(stats[i]['parallel_fraction']))
 
 # Sort according to number of workers. This makes lines in the plots nice
 sort_indices = np.argsort(workers)
 workers = workers[sort_indices]
 perturbations = perturbations[sort_indices]
-mean_of_times = mean_of_times[sort_indices]
-std_of_times = std_of_times[sort_indices]
-mean_of_parallel_fractions = mean_of_parallel_fractions[sort_indices]
-std_of_parallel_fractions = std_of_parallel_fractions[sort_indices]
+time_per_generation_means = time_per_generation_means[sort_indices]
+time_per_generation_stds = time_per_generation_stds[sort_indices]
+parallel_fraction_means = parallel_fraction_means[sort_indices]
+parallel_fraction_stds = parallel_fraction_stds[sort_indices]
 
 if ONLY_LOGARITHMICALLY_SPACED_WORKER_TIMES:
     keep_vals = [1,2,4,8,16,24]
@@ -94,19 +105,19 @@ if ONLY_LOGARITHMICALLY_SPACED_WORKER_TIMES:
     keep_ids = np.array(keep_ids)
     workers = workers[keep_ids]
     perturbations = perturbations[keep_ids]
-    mean_of_times = mean_of_times[keep_ids]
-    std_of_times = std_of_times[keep_ids]
-    mean_of_parallel_fractions = mean_of_parallel_fractions[keep_ids]
-    std_of_parallel_fractions = std_of_parallel_fractions[keep_ids]
+    time_per_generation_means = time_per_generation_means[keep_ids]
+    time_per_generation_stds = time_per_generation_stds[keep_ids]
+    parallel_fraction_means = parallel_fraction_means[keep_ids]
+    parallel_fraction_stds = parallel_fraction_stds[keep_ids]
 
 # Confidence intervals
 cis_times = []
-for m, s in zip(mean_of_times, std_of_times):
+for m, s in zip(time_per_generation_means, time_per_generation_stds):
     interval = sp.stats.norm.interval(0.95, loc=m, scale=s)
     half_width = (interval[1] - interval[0])/2
     cis_times.append(half_width)
 cis_par_frac = []
-for m, s in zip(mean_of_parallel_fractions, std_of_parallel_fractions):
+for m, s in zip(parallel_fraction_means, parallel_fraction_stds):
     interval = sp.stats.norm.interval(0.95, loc=m, scale=s)
     half_width = (interval[1] - interval[0])/2
     cis_par_frac.append(half_width)
@@ -138,11 +149,11 @@ for i_pert in sorted(np.unique(perturbations_SP), reverse=False):
     if not ids_minimal_workers_i_pert.any():
         continue
     # Time per generation and of this job
-    T1 = mean_of_times[ids_minimal_workers_i_pert]
-    T1_std = std_of_times[ids_minimal_workers_i_pert]
+    T1 = time_per_generation_means[ids_minimal_workers_i_pert]
+    T1_std = time_per_generation_stds[ids_minimal_workers_i_pert]
     # Compute speed-ups
-    TP[i_pert] = mean_of_times[ids_perturbation]
-    TP_std[i_pert] = std_of_times[ids_perturbation]
+    TP[i_pert] = time_per_generation_means[ids_perturbation]
+    TP_std[i_pert] = time_per_generation_stds[ids_perturbation]
     # Speed-up
     SP[i_pert] = T1/TP[i_pert]
     SP_std[i_pert] = np.sqrt((T1_std / T1)**2 + (TP_std[i_pert] / TP[i_pert])**2) * np.abs(SP[i_pert])  # See Taylor: "Error analysis"
@@ -150,8 +161,6 @@ for i_pert in sorted(np.unique(perturbations_SP), reverse=False):
     f[i_pert] = (1 - TP[i_pert]/T1) / (1 - 1/workers_SP[i_pert])
     f[i_pert][0] = 0
     f_std[i_pert] = np.zeros(f[i_pert].shape) # TODO: Compute
-    
-
 
 
 # Plotting
@@ -161,8 +170,8 @@ legend = []
 for i_pert in sorted(np.unique(perturbations), reverse=False):
     ids = np.where(perturbations == i_pert)
     x = workers[ids]
-    y = mean_of_times[ids]
-    s = std_of_times[ids]
+    y = time_per_generation_means[ids]
+    s = time_per_generation_stds[ids]
     legend.append(str(i_pert))
     ax.errorbar(x, y, yerr=s, fmt='-o')
 plt.xlabel('Number of workers')
@@ -171,7 +180,7 @@ box = ax.get_position()
 ax.set_position([box.x0, box.y0, box.width * 0.8, box.height])
 ax.legend(legend, title='Perturbations', loc='center left', bbox_to_anchor=(1, 0.5))
 ax.set_yscale('log')
-plt.savefig(os.path.join(args.d,'E005-scaling-01.pdf'), bbox_inches='tight')
+plt.savefig(os.path.join(save_dir,'E005-scaling-01.pdf'), bbox_inches='tight')
 
 # Figure 2: Average time per generation vs number of workers, logarithmic y and x
 fig, ax = plt.subplots()
@@ -179,8 +188,8 @@ legend = []
 for i_pert in sorted(np.unique(perturbations), reverse=False):
     ids = np.where(perturbations == i_pert)
     x = workers[ids]
-    y = mean_of_times[ids]
-    s = std_of_times[ids]
+    y = time_per_generation_means[ids]
+    s = time_per_generation_stds[ids]
     legend.append(str(i_pert))
     ax.errorbar(x, y, yerr=s, fmt='-o')
 box = ax.get_position()
@@ -190,7 +199,7 @@ plt.xlabel('Number of workers')
 plt.ylabel('Average time per generation [s]')
 ax.set_yscale('log')
 ax.set_xscale('log', basex=2)
-plt.savefig(os.path.join(args.d,'E005-scaling-02.pdf'), bbox_inches='tight')
+plt.savefig(os.path.join(save_dir,'E005-scaling-02.pdf'), bbox_inches='tight')
 
 # Figure 3: Average time per generation vs number of workers, logarithmic y and x, smoothed interpolation
 fig, ax = plt.subplots()
@@ -199,8 +208,8 @@ legend = []
 for i_pert in sorted(np.unique(perturbations), reverse=False):
     ids = np.where(perturbations == i_pert)
     x = workers[ids]
-    y = mean_of_times[ids]
-    s = std_of_times[ids]
+    y = time_per_generation_means[ids]
+    s = time_per_generation_stds[ids]
     try:
         tck = sp.interpolate.splrep(x, y, k=3)
     except TypeError:
@@ -216,7 +225,7 @@ plt.ylabel('Time per generation [s]')
 # ax.legend(legend)
 ax.set_yscale('log')
 ax.set_xscale('log', basex=2)
-plt.savefig(os.path.join(args.d,'E005-scaling-03.pdf'), bbox_inches='tight')
+plt.savefig(os.path.join(save_dir,'E005-scaling-03.pdf'), bbox_inches='tight')
 
 # Figure 4: Amdahl's law test
 fig, ax = plt.subplots()
@@ -226,12 +235,12 @@ for i_pert in sorted(np.unique(perturbations), reverse=False):
         continue
     legend.append(str(i_pert))
     ax.errorbar(workers_SP[i_pert], SP[i_pert], yerr=SP_std[i_pert], fmt='-o')
-ax.errorbar(workers_SP[2], workers_SP[2], fmt='-')
+ax.errorbar(workers_SP[2], workers_SP[2])
 legend.append("Ideal")
 plt.xlabel('Number of workers')
 plt.ylabel('Speed-up factor')
 ax.legend(legend, title='Perturbations', loc='upper left', ncol=2, columnspacing=0.5)
-plt.savefig(os.path.join(args.d,'E005-scaling-04.pdf'), bbox_inches='tight')
+plt.savefig(os.path.join(save_dir,'E005-scaling-04.pdf'), bbox_inches='tight')
 
 # Figure 5: Amdahl's law test
 fig, ax = plt.subplots()
@@ -255,7 +264,7 @@ ax.set_xscale('log', basex=2)
 plt.xlabel('Number of perturbations')
 plt.ylabel('Speed-up factor')
 plt.legend(legend, title='CPUs')
-plt.savefig(os.path.join(args.d,'E005-scaling-05.pdf'), bbox_inches='tight')
+plt.savefig(os.path.join(save_dir,'E005-scaling-05.pdf'), bbox_inches='tight')
 
 # Figure 6: ...
 fig, ax = plt.subplots()
@@ -263,15 +272,15 @@ legend = []
 for i_pert in sorted(np.unique(perturbations), reverse=False):
     ids = np.where(perturbations == i_pert)
     x = workers[ids]
-    y = mean_of_parallel_fractions[ids]
-    s = std_of_parallel_fractions[ids]
+    y = parallel_fraction_means[ids]
+    s = parallel_fraction_stds[ids]
     legend.append(str(i_pert) + ' perturbations')
     ax.errorbar(x, y, yerr=s, fmt='-o')
 plt.xlabel('Number of workers')
 plt.ylabel('Average parallel fraction')
 ax.legend(legend)
 # ax.set_yscale('log')
-plt.savefig(os.path.join(args.d,'E005-scaling-06.pdf'), bbox_inches='tight')
+plt.savefig(os.path.join(save_dir,'E005-scaling-06.pdf'), bbox_inches='tight')
 
 # Figure 7: Amdahl's law test: Parallel fraction as function of perturbations
 fig, ax = plt.subplots()
@@ -282,22 +291,18 @@ for i_workers in sorted(np.unique(workers)):
     y_std = np.array([])
     for i_pert in perturbations_SP:
         idx = workers_SP[i_pert] == i_workers
-        y = np.append(y, f[i_pert][idx])
-        y[y<0] = 0
-        y_std = np.append(y_std, f_std[i_pert][idx])
-    ax.errorbar(perturbations_SP, y, yerr=y_std, fmt='o')
+        if idx.any():
+            x = np.append(x, i_pert) 
+            y = np.append(y, f[i_pert][idx])
+            y[y<0] = 0
+            y_std = np.append(y_std, f_std[i_pert][idx])
+    ax.errorbar(x, y, yerr=y_std, fmt='o')
     legend.append(str(i_workers))
 plt.xlabel('Number of perturbations')
 plt.ylabel('Average parallel fraction')
 ax.legend(legend, title='CPUs')
 ax.set_xscale('log', basex=2)
 # ax.set_yscale('log', basey=10)
-plt.savefig(os.path.join(args.d,'E005-scaling-07.pdf'), bbox_inches='tight')
+plt.savefig(os.path.join(save_dir,'E005-scaling-07.pdf'), bbox_inches='tight')
 
-
-
-fig, ax = plt.subplots()
-ax.plot(range(0,10000), range(10000, 0, -1))
-ax.set_yscale('log')
-# plt.savefig(os.path.join(args.d,'E005-scaling-03.pdf'), bbox_inches='tight')
-
+IPython.embed()
