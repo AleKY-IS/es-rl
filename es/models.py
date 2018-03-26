@@ -11,7 +11,8 @@ from torch.autograd import Variable
 from torch.nn.modules.module import _addindent
 
 from context import utils
-from utils.torchutils import torch_summarize
+from utils.torchutils import torch_summarize, calculate_xavier_gain
+
 
 
 def model_weight_initializer(model):
@@ -44,15 +45,6 @@ def model_weight_initializer(model):
             module.weight.data.normal_(0, 0.01)
             module.bias.data.zero_()
         
-    # IPython.embed()
-    # module_name = module.__class__.__name__
-    # gain = nn.init.calculate_gain(nonlinearity, param=None)
-    # if module_name.find('Conv') != -1:
-    #     nn.init.xavier_normal(module.weight.data, gain)
-
-
-    # for param in args.model.parameters():
-    #     IPython.embed()
 
 def capsule_softmax(input, dim=1):
     transposed_input = input.transpose(dim, len(input.size()) - 1)
@@ -112,6 +104,32 @@ class AbstractESModel(nn.Module):
     def _count_layers(m, only_trainable=True):
         k = 'nb_trainable' if only_trainable else 'nb_params'
         return m.summary[m.summary[k] > 0].shape[0]
+
+    def _initialize_weights(self):
+        # Loop in reverse to pick up the nonlinearity following the layer for gain computation
+        modules = list(self.modules())
+        for m in reversed(modules):
+            try:
+                gain = calculate_xavier_gain(m.__class__)
+            except:
+                gain = 1
+            if isinstance(m, nn.Conv1d) or isinstance(m, nn.Conv2d) or isinstance(m, nn.Conv3d):
+                # Convolutional layers
+                assert gain == calculate_xavier_gain(nn.Conv1d)
+                nn.init.xavier_normal(m.weight.data, gain=gain)
+                if m.bias is not None:
+                    m.bias.data.zero_()
+            elif isinstance(m, nn.BatchNorm1d) or isinstance(m, nn.BatchNorm2d) or isinstance(m, nn.BatchNorm3d):
+                # BatchNorm layers
+                if m.affine:
+                    m.weight.data.fill_(1)
+                    m.bias.data.zero_()
+                m.running_mean.zero_()
+                m.running_var.fill_(1)
+            elif isinstance(m, nn.Linear):
+                # Linear layers
+                assert gain == calculate_xavier_gain(nn.Linear)
+                nn.init.xavier_normal(m.weight.data, gain=gain)
 
 
 def transform_range(in_value, in_maxs, in_mins, out_maxs, out_mins):
@@ -182,6 +200,7 @@ class ClassicalControlFFN(AbstractESModel):
         self.lin4 = nn.Linear(64, 32)
         self.relu4 = nn.ReLU()
         self.lin5 = nn.Linear(32, self.n_out)
+        self._initialize_weights()
 
     def forward(self, x):
         x = self.relu1(self.lin1(x))
@@ -193,8 +212,7 @@ class ClassicalControlFFN(AbstractESModel):
 
 
 class DQN(AbstractESModel):
-    """
-    The CNN used by Mnih et al (2015) for Atari environments
+    """The CNN used by Mnih et al (2015) in "Human-level control through deep reinforcement learning" for Atari environments
     """
     def __init__(self, observation_space, action_space):
         super(DQN, self).__init__()
@@ -203,13 +221,13 @@ class DQN(AbstractESModel):
         self.in_dim = observation_space.shape
         in_channels = observation_space.shape[0]
         out_dim = action_space.n
-        IPython.embed()
         self.conv1 = nn.Conv2d(in_channels, out_channels=32, kernel_size=(8, 8), stride=(4, 4))
         self.conv2 = nn.Conv2d(32, out_channels=64, kernel_size=(4, 4), stride=(2, 2))
         self.conv3 = nn.Conv2d(64, out_channels=64, kernel_size=(3, 3), stride=(1, 1))
         n_size = self._get_conv_output(observation_space.shape)
         self.lin1 = nn.Linear(n_size, 512)
         self.lin2 = nn.Linear(512, out_dim)
+        self._initialize_weights()
 
     def forward(self, x):
         x = self._forward_features(x)
@@ -285,6 +303,7 @@ class MujocoFFN(AbstractESModel):
         self.lin6 = nn.Linear(256, 128)
         self.relu6 = nn.ReLU()
         self.lin7 = nn.Linear(128, self.n_out)
+        self._initialize_weights()
 
     def forward(self, x):
         x = self.relu1(self.lin1(x))
@@ -296,9 +315,13 @@ class MujocoFFN(AbstractESModel):
         x = self.out_activation(self.lin7(x))
         return x
 
+
 class MNISTNet(AbstractESModel):
     """ 
-    Convolutional neural network for use on the MNIST data set
+    Convolutional neural network for use on the MNIST data set.
+
+    It uses batch normalization to normalize layer outputs before 
+    applying pooling and nonlinearity according to Ioffe (2015) [https://arxiv.org/pdf/1502.03167.pdf]
     """
     def __init__(self):
         super(MNISTNet, self).__init__()
@@ -320,7 +343,7 @@ class MNISTNet(AbstractESModel):
         self.fc2 = nn.Linear(50, 10)
         self.fc2_logsoftmax = nn.LogSoftmax(dim=1)
 
-        self._initialize_weigths()
+        self._initialize_weights()
 
     def forward(self, x):
         x = self.conv1_relu(self.conv1_pool(self.conv1_bn(self.conv1(x))))
@@ -329,22 +352,6 @@ class MNISTNet(AbstractESModel):
         x = self.fc1_relu(self.fc1_bn(self.fc1(x)))
         x = self.fc2_logsoftmax(self.fc2(x))
         return x
-
-    def _initialize_weigths(self):
-        # gain = nn.init.calculate_gain('relu')
-        gain = 1
-        nn.init.xavier_normal(self.conv1.weight.data, gain=gain)
-        if self.conv1.bias is not None:
-            self.conv1.bias.data.zero_()
-        nn.init.xavier_normal(self.conv2.weight.data, gain=gain)
-        if self.conv2.bias is not None:
-            self.conv2.bias.data.zero_()
-        nn.init.xavier_normal(self.fc1.weight.data, gain=gain)
-        if self.fc1.bias is not None:
-            self.fc1.bias.data.zero_()
-        nn.init.xavier_normal(self.fc2.weight.data, gain=1)
-        if self.fc2.bias is not None:
-            self.fc2.bias.data.zero_()
 
 
 class MNISTNetNoBN(MNISTNet):
@@ -375,6 +382,77 @@ class MNISTNetNoBN(MNISTNet):
         x = x.view(-1, 320)
         x = self.fc1_relu(self.fc1(x))
         x = self.fc2_logsoftmax(self.fc2(x))
+        return x
+
+
+class CIFARNet(nn.Module):
+    """A CNN for the CIFARn data set where n is variable.
+    http://www.isip.uni-luebeck.de/fileadmin/uploads/tx_wapublications/hertel_ijcnn_2015.pdf
+
+    No. Layer           Dimension               Kernel  Stride  Padding
+                        Width   Height  Depth
+    0   Input           227     227     3       -       -       -
+    1   Convolution     55      55      96      11      4       -
+    2   Relu            55      55      96      -       -       -
+    3   Pooling         27      27      96      3       2       -
+    4   Normalization   27      27      96      -       -       -
+
+    5   Convolution     27      27      256     5       1       2
+    6   Relu            27      27      256     -       -       -
+    7   Pooling         13      13      256     3       2       -
+    8   Normalization   13      13      256     -       -       -
+
+    9   Convolution     13      13      384     3       1       1
+    10  Relu            13      13      384     -       -       -
+
+    11  Convolution     13      13      384     3       1       1
+    12  Relu            13      13      384     -       -       -
+
+    13  Convolution     13      13      256     3       1       1
+    14  Relu            13      13      256     -       -       -
+    15  Pooling         6       6       256     3       2       -
+
+    16  Fully Connected 1       1       4096    -       -       -
+    17  Relu            1       1       4096    -       -       -
+    18  Dropout         1       1       4096    -       -       -
+
+    19  Fully Connected 1       1       4096    -       -       -
+    20  Relu            1       1       4096    -       -       -
+    21  Dropout         1       1       4096    -       -       -
+
+    22  Fully Connected 1       1       1000    -       -       -
+    23  Softmax         1       1       1000    -       -       -
+    """
+    
+    def __init__(self, n=10):
+        super(CIFARNet, self).__init__()
+
+        IPython.embed()
+        self.in_dim = torch.Size((1, 28, 28))
+        self.conv1 = nn.Conv2d(3, 96, (11, 11), stride=4)
+        self.conv1_bn = nn.BatchNorm2d(96)
+        self.conv1_pool = nn.MaxPool2d((3,3), stride=2)
+        self.conv1_relu = nn.ReLU()
+
+        self.conv2 = nn.Conv2d(27, 256, (5, 5), stride=4)
+        self.conv1_bn = nn.BatchNorm2d(256)
+        self.conv2_pool = nn.MaxPool2d((3,3), stride=2)
+        self.conv2_relu = nn.ReLU()
+
+        self.conv2 = nn.Conv2d(6, 16, 5)
+        self.fc1 = nn.Linear(16 * 5 * 5, 120)
+        self.fc2 = nn.Linear(120, 84)
+        self.fc3 = nn.Linear(84, 10)
+
+        self._initialize_weights()
+
+    def forward(self, x):
+        x = self.pool(F.relu(self.conv1(x)))
+        x = self.pool(F.relu(self.conv2(x)))
+        x = x.view(-1, 16 * 5 * 5)
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        x = self.fc3(x)
         return x
 
 
