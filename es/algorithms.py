@@ -424,12 +424,12 @@ class Algorithm(object):
         s += "\n==================== MODEL ====================\n"
         s += "Summary of " + self.model.__class__.__name__ + "\n\n"
         self.model.eval()
-        model_summary = torch_summarize(input_size=self.sens_inputs[0].size(), model=self.model, weights=True, input_shape=True, nb_trainable=True)
+        model_summary = torch_summarize(input_size=self.sens_inputs[0].size(), model=self.model)
         s += model_summary.to_string() + "\n\n"
-        s += "Parameters: {:d}".format(model_summary.nb_params.sum()) + "\n"
-        s += "Trainable parameters: {:d}".format(model_summary.nb_params.sum()) + "\n"
-        s += "Layers: {:d}".format((model_summary.nb_params == 0).sum()) + "\n"
-        s += "Trainable layers: {:d}".format((model_summary.nb_trainable == 0).sum()) + "\n"
+        s += "Parameters: {:d}".format(model_summary.n_parameters.sum()) + "\n"
+        s += "Trainable parameters: {:d}".format(model_summary.n_trainable.sum()) + "\n"
+        s += "Layers: {:d}".format(model_summary.shape[0]) + "\n"
+        s += "Trainable layers: {:d}".format((model_summary.n_trainable != 0).sum()) + "\n"
         s += "\n================== OPTIMIZER ==================\n"
         s += str(type(self.optimizer)) + "\n"
         s += pprint.pformat(self.optimizer.state_dict()['param_groups']) + "\n"
@@ -447,6 +447,7 @@ class Algorithm(object):
         s += "CUDA                  {:s}\n".format(str(self.cuda))
         s += "Workers               {:d}\n".format(self.workers)
         s += "Checkpoint interval   {:d}s\n".format(self.chkpt_int)
+        s += "Checkpoint directory  {:s}\n".format(self.chkpt_dir)
         if self.chkpt_dir is not None:
             with open(os.path.join(self.chkpt_dir, 'init.log'), 'a') as f:
                 f.write(s)
@@ -976,17 +977,19 @@ class sES(EvolutionaryStrategy):
         assert optimize_sigma in [None, 'single', 'per-layer', 'per-weight'], "Expected `self.optimize_sigma` to be one of [None, 'single', 'per-layer', 'per-weight'] but was {}".format(self.optimize_sigma)
         self.optimize_sigma = optimize_sigma
         # Add sigma to stats
-        if self.optimize_sigma == 'per-layer':
+        if self.optimize_sigma == 'per-weight':
+            sigma_keys = ['sigma_avg', 'sigma_min', 'sigma_max', 'sigma_med', 'sigma_std']
+            beta_keys = ['beta_avg', 'beta_min', 'beta_max', 'beta_med', 'beta_std']
+        elif self.optimize_sigma == 'per-layer':
             n = self.model.count_tensors(only_trainable=True)
             sigma_keys = ['sigma_' + str(i) for i in range(n)]
-            for k in sigma_keys:
-                self.stats[k] = []
             beta_keys = ['beta_' + str(i) for i in range(n)]
-            for k in beta_keys:
-                self.stats[k] = []
         else:
-            self.stats['sigma'] = []
-            self.stats['beta'] = []
+            sigma_keys = ['sigma']
+            beta_keys = ['beta']
+        for sk, bk in zip(sigma_keys, beta_keys):
+            self.stats[sk] = []
+            self.stats[bk] = []
         # Add sigma to optimizer and lr_scheduler
         beta = self._sigma2beta(sigma)
         if self.optimize_sigma is None:
@@ -1014,7 +1017,7 @@ class sES(EvolutionaryStrategy):
             else:
                 lr = self.lr_scheduler.get_lr()[0]
             beta_par = {'label': '_beta', 'params': Variable(beta_tensor, requires_grad=True),
-                        'lr': lr, 'weight_decay': 0, 'momentum': 0}
+                        'lr': lr, 'weight_decay': 0, 'momentum': 0.9}
             self._beta = self._add_parameter_to_optimize(beta_par)
         self.sigma = self._beta2sigma(self.beta.data)
         # Add learning rates to stats
@@ -1171,8 +1174,18 @@ class sES(EvolutionaryStrategy):
             for i, b in enumerate(self.beta.data):
                 self.stats['beta_' + str(i)].append(b)
         elif self.optimize_sigma == 'per-weight':
-            self.stats['sigma'].append(self.sigma.mean())
-            self.stats['beta'].append(self.beta.data.mean())
+            # Compute mean, min, max, median and std
+            self.stats['sigma_avg'].append(self.sigma.mean())
+            self.stats['sigma_min'].append(self.sigma.min())
+            self.stats['sigma_max'].append(self.sigma.max())
+            self.stats['sigma_med'].append(self.sigma.median())
+            self.stats['sigma_std'].append(self.sigma.std())
+            # Avoid the recomputation for beta
+            self.stats['beta_avg'].append(self._sigma2beta(self.stats['sigma_avg'][-1]))
+            self.stats['beta_min'].append(self._sigma2beta(self.stats['sigma_min'][-1]))
+            self.stats['beta_max'].append(self._sigma2beta(self.stats['sigma_max'][-1]))
+            self.stats['beta_med'].append(self._sigma2beta(self.stats['sigma_med'][-1]))
+            self.stats['beta_std'].append(self.beta.data.std())
 
 
 class sNES(sES):
