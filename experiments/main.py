@@ -18,12 +18,9 @@ from context import es, utils
 from es.algorithms import GA, ES, NES, sES, sNES, xNES
 from es.envs import create_gym_environment
 from es.eval_funs import gym_render, gym_rollout, gym_test, supervised_eval, supervised_test
-from es.models import ClassicalControlFFN, MujocoFFN, DQN, MNISTNet, MNISTNetNoBN
+from es.models import ClassicalControlFFN, MujocoFFN, DQN, MNISTNet, MNISTNetNoBN, CIFARNet
 from torchvision import datasets, transforms
 from utils.misc import get_inputs_from_dict, get_inputs_from_dict_class
-
-# TODO: Get these from modules
-supervised_datasets = ['MNIST', 'FashionMNIST']
 
 
 def parse_inputs():
@@ -123,11 +120,9 @@ def validate_inputs(args):
     if args.env_name in gym.envs.registry.env_specs.keys():
         args.is_supervised = False
         args.is_rl = True
-    elif args.env_name in supervised_datasets:
+    else:
         args.is_supervised = True
         args.is_rl = False
-    else:
-        raise ValueError('The given environment name is unrecognized')
 
 
 def create_model(args):
@@ -141,6 +136,8 @@ def create_model(args):
             args.model = MNISTNet()
         elif args.env_name == 'FashionMNIST':
             args.model = MNISTNet()
+        elif args.env_name == 'CIFAR10':
+            args.model = CIFARNet()
     assert type(args.model) is not str
     # CUDA
     if args.cuda:
@@ -175,9 +172,9 @@ def create_environment(args):
         args.env = create_gym_environment(args.env_name, sqaure_size=args.frame_size)
     elif args.is_supervised:
         data_cuda_kwargs = {'num_workers': 1, 'pin_memory': True} if False else {}
+        batch_size = args.batch_size if not(args.test) else 1000
+        data_dir = os.path.join(args.file_path, 'data', args.env_name)
         if args.env_name == 'MNIST':
-            batch_size = args.batch_size if not(args.test) else 1000
-            data_dir = os.path.join(args.file_path, 'data', 'MNIST')
             data_set = datasets.MNIST(data_dir,
                                       train=not(args.test),
                                       download=True,
@@ -192,9 +189,7 @@ def create_environment(args):
             args.env = torch.utils.data.DataLoader(data_set,
                                                    batch_size=batch_size, 
                                                    shuffle=True, **data_cuda_kwargs)
-        if args.env_name == 'FashionMNIST':
-            batch_size = args.batch_size if not(args.test) else 1000
-            data_dir = os.path.join(args.file_path, 'data', 'Fashion-MNIST')
+        elif args.env_name == 'FashionMNIST':
             data_set = datasets.FashionMNIST(data_dir,
                                              train=not(args.test),
                                              download=True,
@@ -203,6 +198,16 @@ def create_environment(args):
                                                  transforms.Normalize(
                                                      (0.1307,), (0.3081,))
                                              ]))
+            args.env = torch.utils.data.DataLoader(data_set,
+                                                   batch_size=batch_size, 
+                                                   shuffle=True, **data_cuda_kwargs)
+        elif args.env_name == 'CIFAR10':
+            data_set = datasets.CIFAR10(data_dir,
+                                             train=not(args.test),
+                                             download=True,
+                                             transform=transforms.Compose([
+                                                 transforms.ToTensor()
+                                                 ]))
             args.env = torch.utils.data.DataLoader(data_set,
                                                    batch_size=batch_size, 
                                                    shuffle=True, **data_cuda_kwargs)
@@ -253,10 +258,11 @@ def get_lr_from_perturbations(args):
     return args
 
 def test_model(args):
+    args.algorithm.model.eval()
     if args.cuda:
         args.algorithm.model.cuda()
     if args.is_rl:
-        args.test_fun(args.algorithm.model, args.env, max_episode_length=args.batch_size, n_episodes=100, chkpt_dir=args.chkpt_dir)
+        # args.test_fun(args.algorithm.model, args.env, max_episode_length=args.batch_size, n_episodes=100, chkpt_dir=args.chkpt_dir)
         args.rend_fun(args.algorithm.model, args.env, max_episode_length=args.batch_size)
     else:
         args.test_fun(args.algorithm.model, args.env, cuda=args.cuda, chkpt_dir=args.chkpt_dir)
