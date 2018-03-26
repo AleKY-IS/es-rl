@@ -423,7 +423,7 @@ class Algorithm(object):
         s += "Available CPUs        {:s}\n".format(str(mp.cpu_count()))
         s += "\n==================== MODEL ====================\n"
         s += "Summary of " + self.model.__class__.__name__ + "\n\n"
-        IPython.embed()
+        self.model.eval()
         model_summary = torch_summarize(input_size=self.sens_inputs[0].size(), model=self.model, weights=True, input_shape=True, nb_trainable=True)
         s += model_summary.to_string() + "\n\n"
         s += "Parameters: {:d}".format(model_summary.nb_params.sum()) + "\n"
@@ -656,6 +656,7 @@ class EvolutionaryStrategy(Algorithm):
         # Initialize
         # TODO Maybe possible to move to abstract class either in train method or as distinct methods (e.g. init_train)
         self.print_init()
+        self.model.train()
         # Initialize variables dependent on restoring
         if not self._training_start_time:
             # If nothing stored then start from scratch
