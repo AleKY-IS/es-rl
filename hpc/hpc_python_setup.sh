@@ -32,27 +32,19 @@ which python3
 # cd $HOME
 
 # Setup virtual env
-if [ ! -d ~/mlenv ]
+if [ ! -d ~/ml ]
 then
-    python3 -m venv ~/mlenv --copies
-    source ~/mlenv/bin/activate
+    python3 -m venv ~/ml --copies
+    source ~/ml/bin/activate
     pip3 install -U matplotlib scikit-learn tensorflow keras ipython pandas seaborn dropbox
     pip3 install -U requests>=2.18.1  # Version to fix "float() argument must be a string or a number, not 'Timeout'" error in _validate_timeout in urllib3/utils.timeout.py l. 124
     pip3 install -U gym==0.9.5  # Version to fix bug with missing gym.benchmarks
+    pip3 install -U gym[box2d]
+    pip3 install -U gym[atari]
     pip3 install -U universe
     pip3 install -U http://download.pytorch.org/whl/cu90/torch-0.3.0.post4-cp36-cp36m-linux_x86_64.whl 
     pip3 install -U torchvision
 fi
-source ~/mlenv/bin/activate
+source ~/ml/bin/activate
 
 echo "Install script successfully completed"
-#!/bin/sh
-#PBS -N test
-#PBS -q hpc
-#PBS -l walltime=01:30:00
-#PBS -l nodes=1:ppn=20
-#PBS -l vmem=6gb
-#PBS -j oe
-#PBS -o test.log 
-
-

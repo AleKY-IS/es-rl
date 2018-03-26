@@ -17,7 +17,7 @@ module load numpy/1.13.1-python-3.6.2-openblas-0.2.20
 module load scipy/0.19.1-python-3.6.2
 
 # Activate ml envrionment
-source ~/mlenv/bin/activate
+source ~/ml/bin/activate
 
 # Set $HOME if running as a bsub script
 if [ -z "$BSUB_O_WORKDIR" ]; then
