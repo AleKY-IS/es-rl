@@ -18,7 +18,7 @@ from context import es, utils
 from es.algorithms import GA, ES, NES, sES, sNES, xNES
 from es.envs import create_gym_environment
 from es.eval_funs import gym_render, gym_rollout, gym_test, supervised_eval, supervised_test
-from es.models import ClassicalControlFFN, MujocoFFN, DQN, MNISTNet, MNISTNetNoBN, CIFARNet
+from es.models import ClassicalControlFFN, MujocoFFN, DQN, MNISTNet, MNISTNetNoBN, MNISTNetNoInit, CIFARNet
 from torchvision import datasets, transforms
 from utils.misc import get_inputs_from_dict, get_inputs_from_dict_class
 
