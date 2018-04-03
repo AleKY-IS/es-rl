@@ -25,7 +25,7 @@ def get_names_dict(model):
     return names
 
 
-def torch_summarize(model, input_size, weights=False, input_shape=True, nb_trainable=False):
+def torch_summarize(model, input_size, return_meta=False):
     """
     Summarizes torch model by showing trainable parameters and weights.
     
@@ -43,77 +43,76 @@ def torch_summarize(model, input_size, weights=False, input_shape=True, nb_train
         df = torch_summarize(model=model, input_size=(3, 224, 224))
         print(df)
         
-                     name class_name        input_shape       output_shape  nb_params
+                     name class_name        input_shape       output_shape  n_parameters
         1     features=>0     Conv2d  (-1, 3, 224, 224)   (-1, 64, 55, 55)      23296
         2     features=>1       ReLU   (-1, 64, 55, 55)   (-1, 64, 55, 55)          0
         ...
     """
 
     def register_hook(module):
+        # Define hook
         def hook(module, input, output):
             name = ''
             for key, item in names.items():
                 if item == module:
                     name = key
-
+            # Get class name and set module index
             class_name = str(module.__class__).split('.')[-1].split("'")[0]
             module_idx = len(summary)
-
             m_key = module_idx + 1
-
+            # Prepare summary entry for this module
             summary[m_key] = OrderedDict()
             summary[m_key]['name'] = name
             summary[m_key]['class_name'] = class_name
-
-            if input_shape:
-                summary[m_key]['input_shape'] = (-1, ) + tuple(input[0].size())[1:]
-
+            # Input and output shape
+            summary[m_key]['input_shape'] = (-1, ) + tuple(input[0].size())[1:]
             summary[m_key]['output_shape'] = (-1, ) + tuple(output.size())[1:]
+            # Weight dimensions
+            summary[m_key]['weight_shapes'] = list([tuple(p.size()) for p in module.parameters()])
+            # Number of parameters in layers
+            summary[m_key]['n_parameters'] = sum([torch.LongTensor(list(p.size())).prod() for p in module.parameters()])            
+            summary[m_key]['n_trainable'] = sum([torch.LongTensor(list(p.size())).prod() for p in module.parameters() if p.requires_grad])
 
-            if weights:
-                summary[m_key]['weights'] = list([tuple(p.size()) for p in module.parameters()])
-
-            if nb_trainable:
-                summary[m_key]['nb_trainable'] = sum([torch.LongTensor(list(p.size())).prod() for p in module.parameters() if p.requires_grad])
-
-            summary[m_key]['nb_params'] = sum([torch.LongTensor(list(p.size())).prod() for p in module.parameters()])
-            
+        # Append 
         if not isinstance(module, nn.Sequential) and not isinstance(module, nn.ModuleList) and not (module == model):
             hooks.append(module.register_forward_hook(hook))
-            
+
     # Put model in evaluation mode (required for e.g. batchnorm layers)
     model.eval()
-
     # Names are stored in parent and path+name is unique not the name
     names = get_names_dict(model)
-
-    # check if there are multiple inputs to the network
+    # Check if there are multiple inputs to the network
     if isinstance(input_size[0], (list, tuple)):
         x = [Variable(torch.rand(1, *in_size)) for in_size in input_size]
     else:
         x = Variable(torch.rand(1, *input_size))
-
+    # Move parameters to CUDA if relevant
     if next(model.parameters()).is_cuda:
         x = x.cuda()
-
-    # create properties
+    # Create properties
     summary = OrderedDict()
     hooks = []
-
-    # register hook
+    # Register hook on all modules of model
     model.apply(register_hook)
-
-    # make a forward pass
+    # Make a forward pass to evaluate registered hook functions
+    # and build summary
     model(x)
-
-    # remove these hooks
+    # Remove all the registered hooks from the model again and
+    # return it in the state it was given.
     for h in hooks:
         h.remove()
-
-    # make dataframe
+    # Make dataframe
     df_summary = pd.DataFrame.from_dict(summary, orient='index')
-
-    return df_summary
+    # Create additional info
+    if return_meta:
+        meta = {'total_parameters': df_summary.n_parameters.sum(),
+                'total_trainable': df_summary.n_trainable.sum(),
+                'layers': df_summary.shape[0],
+                'trainable_layers': (df_summary.n_trainable != 0).sum()}
+        df_meta = pd.DataFrame.from_dict(meta, orient='index')
+        return df_summary, df_meta
+    else:
+        return df_summary
 
 
 def get_mean_and_std(dataset, dim=0):
