@@ -69,7 +69,7 @@ class AbstractESModel(nn.Module):
     @property
     def summary(self):
         if not hasattr(self, '_summary'):
-            self._summary = torch_summarize(self, self.in_dim, weights=True, input_shape=True, nb_trainable=True)
+            self._summary = torch_summarize(self, self.in_dim)
         return self._summary
 
     def count_parameters(self, only_trainable=True):
@@ -81,7 +81,7 @@ class AbstractESModel(nn.Module):
     def _count_parameters(m, only_trainable=True):
         """Count the number of [trainable] parameters in a pytorch model.
         """
-        k = 'nb_trainable' if only_trainable else 'nb_params'
+        k = 'n_trainable' if only_trainable else 'n_parameters'
         return int(m.summary[k].sum())
 
     def count_tensors(self, only_trainable=True):
@@ -89,10 +89,10 @@ class AbstractESModel(nn.Module):
 
     @staticmethod
     def _count_tensors(m, only_trainable=True):
-        """Count the number of [trainable] tensors in a pytorch model
+        """Count the number of [trainable] tensor objects in a pytorch model.
         """
-        k = 'nb_trainable' if only_trainable else 'nb_params'
-        return sum([1 for i, l in m.summary.iterrows() for w in l['weights'] if l['weights'] and l[k] > 0])
+        k = 'n_trainable' if only_trainable else 'n_parameters'
+        return sum([1 for i, l in m.summary.iterrows() for w in l['weight_shapes'] if l['weight_shapes'] and l[k] > 0])
 
     def count_layers(self, only_trainable=True):
         """Count the number of [trainable] layers in a pytorch model.
@@ -102,7 +102,7 @@ class AbstractESModel(nn.Module):
     
     @staticmethod
     def _count_layers(m, only_trainable=True):
-        k = 'nb_trainable' if only_trainable else 'nb_params'
+        k = 'n_trainable' if only_trainable else 'n_parameters'
         return m.summary[m.summary[k] > 0].shape[0]
 
     def _initialize_weights(self):
@@ -114,22 +114,22 @@ class AbstractESModel(nn.Module):
             except:
                 gain = 1
             if isinstance(m, nn.Conv1d) or isinstance(m, nn.Conv2d) or isinstance(m, nn.Conv3d):
-                # Convolutional layers
                 assert gain == calculate_xavier_gain(nn.Conv1d)
                 nn.init.xavier_normal(m.weight.data, gain=gain)
                 if m.bias is not None:
                     m.bias.data.zero_()
-            elif isinstance(m, nn.BatchNorm1d) or isinstance(m, nn.BatchNorm2d) or isinstance(m, nn.BatchNorm3d):
-                # BatchNorm layers
-                if m.affine:
-                    m.weight.data.fill_(1)
-                    m.bias.data.zero_()
-                m.running_mean.zero_()
-                m.running_var.fill_(1)
             elif isinstance(m, nn.Linear):
-                # Linear layers
                 assert gain == calculate_xavier_gain(nn.Linear)
                 nn.init.xavier_normal(m.weight.data, gain=gain)
+            elif isinstance(m, nn.BatchNorm1d) or isinstance(m, nn.BatchNorm2d) or isinstance(m, nn.BatchNorm3d):
+                if m.affine:
+                    # Affine transform does nothing at first
+                    m.weight.data.fill_(1)
+                    m.bias.data.zero_()
+                # if m.track_running_stats:
+                # Running stats are initialized to have no history
+                m.running_mean.zero_()
+                m.running_var.fill_(1)
 
 
 def transform_range(in_value, in_maxs, in_mins, out_maxs, out_mins):
@@ -211,46 +211,6 @@ class ClassicalControlFFN(AbstractESModel):
         return x
 
 
-class DQN(AbstractESModel):
-    """The CNN used by Mnih et al (2015) in "Human-level control through deep reinforcement learning" for Atari environments
-    """
-    def __init__(self, observation_space, action_space):
-        super(DQN, self).__init__()
-        assert hasattr(observation_space, 'shape') and len(observation_space.shape) == 3
-        assert hasattr(action_space, 'n')
-        self.in_dim = observation_space.shape
-        in_channels = observation_space.shape[0]
-        out_dim = action_space.n
-        self.conv1 = nn.Conv2d(in_channels, out_channels=32, kernel_size=(8, 8), stride=(4, 4))
-        self.conv2 = nn.Conv2d(32, out_channels=64, kernel_size=(4, 4), stride=(2, 2))
-        self.conv3 = nn.Conv2d(64, out_channels=64, kernel_size=(3, 3), stride=(1, 1))
-        n_size = self._get_conv_output(observation_space.shape)
-        self.lin1 = nn.Linear(n_size, 512)
-        self.lin2 = nn.Linear(512, out_dim)
-        self._initialize_weights()
-
-    def forward(self, x):
-        x = self._forward_features(x)
-        x = x.view(x.size(0), -1)
-        x = F.relu(self.lin1(x))
-        x = F.softmax(self.lin2(x), dim=1)
-        return x
-
-    def _get_conv_output(self, shape):
-        """ Compute the number of output parameters from convolutional part by forward pass"""
-        bs = 1
-        inputs = Variable(torch.rand(bs, *shape))
-        output_feat = self._forward_features(inputs)
-        n_size = output_feat.data.view(bs, -1).size(1)
-        return n_size
-
-    def _forward_features(self, x):
-        x = F.relu(self.conv1(x))
-        x = F.relu(self.conv2(x))
-        x = F.relu(self.conv3(x))
-        return x
-
-
 class MujocoFFN(AbstractESModel):
     """
     FFN for Mujoco control problems
@@ -316,6 +276,46 @@ class MujocoFFN(AbstractESModel):
         return x
 
 
+class DQN(AbstractESModel):
+    """The CNN used by Mnih et al (2015) in "Human-level control through deep reinforcement learning" for Atari environments
+    """
+    def __init__(self, observation_space, action_space):
+        super(DQN, self).__init__()
+        assert hasattr(observation_space, 'shape') and len(observation_space.shape) == 3
+        assert hasattr(action_space, 'n')
+        self.in_dim = observation_space.shape
+        in_channels = observation_space.shape[0]
+        out_dim = action_space.n
+        self.conv1 = nn.Conv2d(in_channels, out_channels=32, kernel_size=(8, 8), stride=(4, 4))
+        self.conv2 = nn.Conv2d(32, out_channels=64, kernel_size=(4, 4), stride=(2, 2))
+        self.conv3 = nn.Conv2d(64, out_channels=64, kernel_size=(3, 3), stride=(1, 1))
+        n_size = self._get_conv_output(observation_space.shape)
+        self.lin1 = nn.Linear(n_size, 512)
+        self.lin2 = nn.Linear(512, out_dim)
+        self._initialize_weights()
+
+    def forward(self, x):
+        x = self._forward_features(x)
+        x = x.view(x.size(0), -1)
+        x = F.relu(self.lin1(x))
+        x = F.softmax(self.lin2(x), dim=1)
+        return x
+
+    def _get_conv_output(self, shape):
+        """ Compute the number of output parameters from convolutional part by forward pass"""
+        bs = 1
+        inputs = Variable(torch.rand(bs, *shape))
+        output_feat = self._forward_features(inputs)
+        n_size = output_feat.data.view(bs, -1).size(1)
+        return n_size
+
+    def _forward_features(self, x):
+        x = F.relu(self.conv1(x))
+        x = F.relu(self.conv2(x))
+        x = F.relu(self.conv3(x))
+        return x
+
+
 class MNISTNet(AbstractESModel):
     """ 
     Convolutional neural network for use on the MNIST data set.
@@ -328,12 +328,12 @@ class MNISTNet(AbstractESModel):
         self.in_dim = torch.Size((1, 28, 28))
         self.conv1 = nn.Conv2d(1, 10, kernel_size=(5, 5))
         self.conv1_bn = nn.BatchNorm2d(10)
-        self.conv1_pool = nn.MaxPool2d(kernel_size=(2,2), stride=None, padding=0, dilation=1, return_indices=False, ceil_mode=False)
+        self.conv1_pool = nn.MaxPool2d(kernel_size=(2, 2), stride=None, padding=0, dilation=1, return_indices=False, ceil_mode=False)
         self.conv1_relu = nn.ReLU()
 
         self.conv2 = nn.Conv2d(10, 20, kernel_size=(5, 5))
         self.conv2_bn = nn.BatchNorm2d(20)
-        self.conv2_pool = nn.MaxPool2d(kernel_size=(2,2), stride=None, padding=0, dilation=1, return_indices=False, ceil_mode=False)
+        self.conv2_pool = nn.MaxPool2d(kernel_size=(2, 2), stride=None, padding=0, dilation=1, return_indices=False, ceil_mode=False)
         self.conv2_relu = nn.ReLU()
 
         self.fc1 = nn.Linear(320, 50)
@@ -354,18 +354,18 @@ class MNISTNet(AbstractESModel):
         return x
 
 
-class MNISTNetNoBN(MNISTNet):
+class MNISTNetNoBN(AbstractESModel):
     """This version uses no batch normalization
     """
     def __init__(self):
         super(MNISTNetNoBN, self).__init__()
         self.in_dim = torch.Size((1, 28, 28))
         self.conv1 = nn.Conv2d(1, 10, kernel_size=(5, 5))
-        self.conv1_pool = nn.MaxPool2d(kernel_size=(2,2), stride=None, padding=0, dilation=1, return_indices=False, ceil_mode=False)
+        self.conv1_pool = nn.MaxPool2d(kernel_size=(2, 2), stride=None, padding=0, dilation=1, return_indices=False, ceil_mode=False)
         self.conv1_relu = nn.ReLU()
 
         self.conv2 = nn.Conv2d(10, 20, kernel_size=(5, 5))
-        self.conv2_pool = nn.MaxPool2d(kernel_size=(2,2), stride=None, padding=0, dilation=1, return_indices=False, ceil_mode=False)
+        self.conv2_pool = nn.MaxPool2d(kernel_size=(2, 2), stride=None, padding=0, dilation=1, return_indices=False, ceil_mode=False)
         self.conv2_relu = nn.ReLU()
 
         self.fc1 = nn.Linear(320, 50)
@@ -374,7 +374,7 @@ class MNISTNetNoBN(MNISTNet):
         self.fc2 = nn.Linear(50, 10)
         self.fc2_logsoftmax = nn.LogSoftmax(dim=1)
 
-        self._initialize_weigths()
+        self._initialize_weights()
 
     def forward(self, x):
         x = self.conv1_relu(self.conv1_pool(self.conv1(x)))
@@ -383,6 +383,27 @@ class MNISTNetNoBN(MNISTNet):
         x = self.fc1_relu(self.fc1(x))
         x = self.fc2_logsoftmax(self.fc2(x))
         return x
+
+
+class MNISTNetNoInit(MNISTNet):
+    """This version uses default weight initialization
+    """
+    def __init__(self):
+        super(MNISTNetNoInit, self).__init__()
+        self.in_dim = torch.Size((1, 28, 28))
+        self.conv1 = nn.Conv2d(1, 10, kernel_size=(5, 5))
+        self.conv1_pool = nn.MaxPool2d(kernel_size=(2, 2), stride=None, padding=0, dilation=1, return_indices=False, ceil_mode=False)
+        self.conv1_relu = nn.ReLU()
+
+        self.conv2 = nn.Conv2d(10, 20, kernel_size=(5, 5))
+        self.conv2_pool = nn.MaxPool2d(kernel_size=(2, 2), stride=None, padding=0, dilation=1, return_indices=False, ceil_mode=False)
+        self.conv2_relu = nn.ReLU()
+
+        self.fc1 = nn.Linear(320, 50)
+        self.fc1_relu = nn.ReLU()
+
+        self.fc2 = nn.Linear(50, 10)
+        self.fc2_logsoftmax = nn.LogSoftmax(dim=1)
 
 
 class CIFARNet(nn.Module):
