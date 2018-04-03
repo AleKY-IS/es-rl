@@ -105,48 +105,49 @@ class AtariPreProcessorMnih2015(vectorized.ObservationWrapper):
 
     def __init__(self, env=None):
         super(AtariPreProcessorMnih2015, self).__init__(env)
+        self.input_shape_original = (210, 160, 3)
         self.n_previous_frames = 4
         self.frame_size = (84, 84)
         self.observation_space = gym.spaces.Box(0.0, 1.0, (self.n_previous_frames, *self.frame_size))
         # Ring buffer of previous frames
-        self.previous_frames = np.zeros(self.observation_space.shape)  # ollections.deque(maxlen=self.n_previous_frames)
+        self.previous_frames_original = np.zeros((self.n_previous_frames, *self.input_shape_original))  # collections.deque(maxlen=self.n_previous_frames)
+        self.previous_frames = np.zeros(self.observation_space.shape)
         self.frame_counter = 0
     
     def _observation(self, frame):
         assert len(frame) == 1
         frame = frame[0]
+        
+        # Store original frame (4, 210, 160, 3)
+        self.previous_frames_original = np.roll(self.previous_frames_original, shift=1, axis=0)
+        self.previous_frames_original[0, ...] = frame
+
+        # Fix odd-even flickering by maxing over last two values of each pixel (210, 160, 3)
+        frame = np.maximum(frame, self.previous_frames_original[0, ...]).astype(np.uint8)
+        # Grey scale conversion (210, 160)
+        frame = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+        # Frame resizing (84, 84)
+        frame = cv2.resize(frame, self.frame_size, interpolation=cv2.INTER_AREA)  # [cv2.INTER_LINEAR, cv2.INTER_AREA, cv2.INTER_NEAREST, cv2.INTER_CUBIC, cv2.INTER_LANCZOS4]
+ 
+        # Shift previous images by one and save new frame (4, 84, 84)
+        self.previous_frames = np.roll(self.previous_frames, shift=1, axis=0)
+        self.previous_frames[0, ...] = frame
+        
+        return [self.previous_frames]
+
         # import matplotlib.pyplot as plt
         # f = plt.figure()
         # plt.imshow(frame)
-        # f.savefig('_1original.pdf')
-        # Frame resizing
-        frame = cv2.resize(frame, self.frame_size, interpolation=cv2.INTER_AREA)  # [cv2.INTER_LINEAR, cv2.INTER_AREA, cv2.INTER_NEAREST, cv2.INTER_CUBIC, cv2.INTER_LANCZOS4]
+        # f.savefig('./preprocessing/1-spaceinvaders-original.pdf')
         # f = plt.figure()
-        # plt.imshow(frame)
-        # f.savefig('_2resized.pdf')
-        # Grey scale conversion
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        # plt.imshow(np.maximum(frame, self.previous_frames_original[0, ...]).astype(np.uint8))
+        # f.savefig('./preprocessing/2-spaceinvaders-flicker.pdf')
         # f = plt.figure()
-        # plt.imshow(frame)
-        # f.savefig('_3grey.pdf')
-        # Fix odd-even flickering by maxing over last two values of each pixel
-        frame = np.maximum(frame, self.previous_frames[0, ...])
+        # plt.imshow(cv2.cvtColor(np.maximum(frame, self.previous_frames_original[0, ...]).astype(np.uint8), cv2.COLOR_BGR2GRAY), cmap='gray')
+        # f.savefig('./preprocessing/3-spaceinvaders-grey.pdf')
         # f = plt.figure()
-        # plt.imshow(frame)
-        # f.savefig('_4fixed.pdf')
-        # Shift previous images by one and save new frame
-        self.previous_frames = np.roll(self.previous_frames, shift=1, axis=0)
-        self.previous_frames[0, ...] = frame
-        return [self.previous_frames]
-
-        # for interpol in [cv2.INTER_LINEAR, cv2.INTER_AREA, cv2.INTER_NEAREST, cv2.INTER_CUBIC, cv2.INTER_LANCZOS4]:
-        #     t = time.time()
-        #     for i in range(100000):
-        #         frame_r = cv2.resize(frame, self.frame_size, interpolation=interpol)  # cv.INTER_LINEAR, INTER_AREA, INTER_NEAREST, INTER_CUBIC, INTER_LANCZOS4
-        #     print(time.time() - t)
-        #     f = plt.figure()
-        #     plt.imshow(frame_r)
-        #     f.savefig('_2resized_' + str(interpol) + '.pdf')
+        # plt.imshow(cv2.resize(cv2.cvtColor(np.maximum(frame, self.previous_frames_original[0, ...]).astype(np.uint8), cv2.COLOR_BGR2GRAY), self.frame_size, interpolation=cv2.INTER_AREA), cmap='gray')
+        # f.savefig('./preprocessing/4-spaceinvaders-resized.pdf')
         
 
 class AtariRescale(vectorized.ObservationWrapper):
