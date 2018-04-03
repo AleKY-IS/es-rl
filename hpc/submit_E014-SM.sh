@@ -54,12 +54,12 @@ echo $POSITIONAL
 # Set defaults if unassigned
 FOO=${ID:="E999-default"}
 FOO=${QUEUE:="hpc"}
-FOO=${CORES:="20"}
+FOO=${CORES:="8"}
 FOO=${TIME_LIMIT:="72:00"}
 
 # List of input strings to the call
 ID="E014-SM"
-COMMON_IN="--id ${ID} --algorithm sNES --optimize-sigma per-weight --env-name MNIST --model MNISTNet --optimizer Adam --lr 0.05 --cov-lr 0.05 --perturbations 100 --max-generations 5000 --batch-size 1000 --chkpt-int 1200 --lr-scheduler ExponentialLR --gamma 1"
+COMMON_IN="--id ${ID} --workers ${CORES} --algorithm sNES --optimize-sigma per-weight --env-name MNIST --model MNISTNet --optimizer Adam --lr 0.05 --cov-lr 0.05 --perturbations 100 --max-generations 5000 --batch-size 1000 --chkpt-int 1200 --lr-scheduler ExponentialLR --gamma 1"
 declare -a INPUTS=(
 					"$COMMON_IN --safe-mutation SUM"
 					"$COMMON_IN --safe-mutation None"

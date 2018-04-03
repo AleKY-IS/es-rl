@@ -54,15 +54,16 @@ echo $POSITIONAL
 # Set defaults if unassigned
 FOO=${ID:="E999-default"}
 FOO=${QUEUE:="hpc"}
-FOO=${CORES:="20"}
+FOO=${CORES:="8"}
 FOO=${TIME_LIMIT:="72:00"}
 
 # List of input strings to the call
 ID="E015-AS"
-COMMON_IN="--id ${ID} --algorithm sNES --optimize-sigma per-weight --env-name MNIST --model MNISTNet --optimizer Adam --lr 0.05 --cov-lr 0.05 --perturbations 100 --max-generations 5000 --batch-size 1000 --safe-mutation SUM --chkpt-int 1200 --lr-scheduler ExponentialLR --gamma 1"
+COMMON_IN="--id ${ID} --workers ${CORES} --algorithm sNES --optimize-sigma per-weight --env-name MNIST --model MNISTNet --optimizer Adam --lr 0.05 --cov-lr 0.05 --max-generations 5000 --batch-size 1000 --safe-mutation SUM --chkpt-int 1200 --lr-scheduler ExponentialLR --gamma 1"
 declare -a INPUTS=(
-					"$COMMON_IN --no-antithetic"
-					"$COMMON_IN"
+					"$COMMON_IN --perturbations 50 --no-antithetic"
+					"$COMMON_IN --perturbations 100 --no-antithetic"
+					"$COMMON_IN --perturbations 100"
 				   )
 SCRIPT="run_hpc.sh"
 REPEATS=30

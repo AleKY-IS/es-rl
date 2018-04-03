@@ -54,21 +54,19 @@ echo $POSITIONAL
 # Set defaults if unassigned
 FOO=${ID:="E999-default"}
 FOO=${QUEUE:="hpc"}
-FOO=${CORES:="20"}
+FOO=${CORES:="8"}
 FOO=${TIME_LIMIT:="72:00"}
-
-
 
 # List of input strings to the call
 ID="E012-bn-init"
-COMMON_IN="--id ${ID} --algorithm sNES --optimize-sigma per-weight --env-name MNIST --optimizer Adam --lr 0.05 --cov-lr 0.05 --perturbations 100 --max-generations 5000 --batch-size 1000 --safe-mutation SUM --chkpt-int 1200 --lr-scheduler ExponentialLR --gamma 1"
+COMMON_IN="--id ${ID} --workers ${CORES} --algorithm sNES --optimize-sigma per-weight --env-name MNIST --optimizer Adam --lr 0.05 --cov-lr 0.05 --perturbations 100 --max-generations 5000 --batch-size 1000 --safe-mutation SUM --chkpt-int 1200 --lr-scheduler ExponentialLR --gamma 1"
 declare -a INPUTS=(
 					"$COMMON_IN  --model MNISTNet"
 					"$COMMON_IN  --model MNISTNetNoBN"
 					"$COMMON_IN  --model MNISTNetNoInit"
 				   )
 SCRIPT="run_hpc.sh"
-REPEATS=20
+REPEATS=30
 
 # Monitorer
 TOTAL_TIME="120:00"
