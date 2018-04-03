@@ -132,12 +132,13 @@ def create_model(args):
     if args.is_rl:
         args.model = ModelClass(args.env.observation_space, args.env.action_space)
     elif args.is_supervised:
+        args.model = ModelClass()
         if args.env_name == 'MNIST':
-            args.model = MNISTNet()
+            assert ModelClass in [MNISTNet, MNISTNetNoBN, MNISTNetNoInit]
         elif args.env_name == 'FashionMNIST':
-            args.model = MNISTNet()
+            assert ModelClass in [MNISTNet, MNISTNetNoBN, MNISTNetNoInit]
         elif args.env_name == 'CIFAR10':
-            args.model = CIFARNet()
+            assert ModelClass in [CIFARNet]
     assert type(args.model) is not str
     # CUDA
     if args.cuda:
