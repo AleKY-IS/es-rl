@@ -62,7 +62,7 @@ ID="E017-opti"
 COMMON_IN="--id ${ID} --workers ${CORES} --algorithm sNES --optimize-sigma single --env-name MNIST --model MNISTNet --lr 0.05 --cov-lr 0.05 --perturbations 100 --max-generations 1000 --batch-size 1000 --safe-mutation SUM --chkpt-int 1200 --lr-scheduler ExponentialLR --gamma 1"
 declare -a INPUTS=(
 					"$COMMON_IN --optimizer Adam"
-					"$COMMON_IN --optimizer SGD --momemtum 0.9"
+					"$COMMON_IN --optimizer SGD --momentum 0.9"
 				   )
 SCRIPT="run_hpc.sh"
 REPEATS=30
