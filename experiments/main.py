@@ -56,13 +56,14 @@ def parse_inputs():
     parser = argparse.ArgumentParser(description='Experiments')
     # Algorithm
     parser.add_argument('--algorithm', type=str, default='sES', metavar='ALG', help='Model name in es.models')
-    parser.add_argument('--perturbations', type=int, default=40, metavar='N', help='Number of perturbed models to make; must be even')
+    parser.add_argument('--perturbations', type=int, default=100, metavar='N', help='Number of perturbed models to make; must be even')
     parser.add_argument('--sigma', type=float, default=0.05, metavar='SD', help='Initial noise standard deviation')
     parser.add_argument('--optimize-sigma', type=str, default='None', choices=sigma_choices, metavar='OS', help='Which type of covariance matrix parameterization to use')
     parser.add_argument('--no-antithetic', action='store_true', help='Boolean to not to use antithetic sampling')
     parser.add_argument('--safe-mutation', type=str, default='SUM', choices=sm_choices, help='String denoting the type of safe mutations to use')
     parser.add_argument('--batch-size', type=int, default=1000, metavar='BS', help='Batch size agent evaluation (max episode steps for RL setting rollouts)')
     parser.add_argument('--max-generations', type=int, default=7500, metavar='MG', help='Maximum number of generations')
+    parser.add_argument('--val-every', type=int, default=25, metavar='TE', help='Interval at which to test the model on validation set (if relevant)')
     # Environment
     parser.add_argument('--env-name', type=str, default='MNIST', metavar='ENV', help='RL environment or dataset')
     parser.add_argument('--frame-size', type=int, default=84, metavar='FS', help='Square size of frames in pixels')
@@ -70,7 +71,7 @@ def parse_inputs():
     parser.add_argument('--model', type=str, default='MNISTNet', metavar='MOD', help='Model name in es.models')
     # Optimizer
     parser.add_argument('--optimizer', type=str, default='SGD', help='Optimizer to use')
-    parser.add_argument('--lr', type=float, default=0.02, metavar='LR', help='Optimizer learning rate')
+    parser.add_argument('--lr', type=float, default=0.05, metavar='LR', help='Optimizer learning rate')
     parser.add_argument('--cov-lr', type=float, default=None, metavar='LR_BETA', help='Optimizer learning rate for covariance parameter')
     parser.add_argument('--momentum', type=float, default=0.9, help='Optimizer momentum')
     parser.add_argument('--nesterov', action='store_true', help='Boolean to denote if optimizer momentum is Nesterov')
@@ -172,46 +173,43 @@ def create_environment(args):
     if args.is_rl:
         args.env = create_gym_environment(args.env_name, sqaure_size=args.frame_size)
     elif args.is_supervised:
-        data_cuda_kwargs = {'num_workers': 1, 'pin_memory': True} if False else {}
-        batch_size = args.batch_size if not(args.test) else 1000
-        data_dir = os.path.join(args.file_path, 'data', args.env_name)
+        # Create normalization transforms (values computed by torchutils.dataset_mean_and_var)
         if args.env_name == 'MNIST':
-            data_set = datasets.MNIST(data_dir,
-                                      train=not(args.test),
-                                      download=True,
-                                      transform=transforms.Compose([
-                                          transforms.ToTensor(),
-                                          transforms.Normalize(
-                                              (0.1307,), (0.3081,))
-                                      ]))
-            if not args.test and args.do_permute_train_labels:
-                # Permute the labels randomly to test 'Rethinking Generalization'
-                data_set.train_labels = torch.LongTensor(np.random.permutation(data_set.train_labels))
-            args.env = torch.utils.data.DataLoader(data_set,
-                                                   batch_size=batch_size, 
-                                                   shuffle=True, **data_cuda_kwargs)
+            data_set = datasets.MNIST
+            mean = (0.130660742521286,)
+            var = (0.30810874700546265,)
         elif args.env_name == 'FashionMNIST':
-            data_set = datasets.FashionMNIST(data_dir,
-                                             train=not(args.test),
-                                             download=True,
-                                             transform=transforms.Compose([
-                                                 transforms.ToTensor(),
-                                                 transforms.Normalize(
-                                                     (0.1307,), (0.3081,))
-                                             ]))
-            args.env = torch.utils.data.DataLoader(data_set,
-                                                   batch_size=batch_size, 
-                                                   shuffle=True, **data_cuda_kwargs)
+            data_set = datasets.FashionMNIST
+            mean = (-2.9279166483320296e-05,)
+            var = (34.189090728759766,)
         elif args.env_name == 'CIFAR10':
-            data_set = datasets.CIFAR10(data_dir,
-                                             train=not(args.test),
-                                             download=True,
-                                             transform=transforms.Compose([
-                                                 transforms.ToTensor()
-                                                 ]))
-            args.env = torch.utils.data.DataLoader(data_set,
-                                                   batch_size=batch_size, 
-                                                   shuffle=True, **data_cuda_kwargs)
+            data_set = datasets.CIFAR10
+            mean = (0.48753172159194946, 0.47322431206703186, 0.4359692335128784)
+            var = (0.24663160741329193, 0.24822315573692322, 0.2677987813949585)
+        elif args.env_name == 'CIFAR100':
+            data_set = datasets.CIFAR100
+            mean = (0.5141649842262268, 0.47902533411979675, 0.4298681914806366)
+            var = (0.2685449421405792, 0.26044416427612305, 0.28062567114830017)
+        # Arguments for data set
+        data_dir = os.path.join(args.file_path, 'data', args.env_name)
+        transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize(mean, var)])
+        train_set_kwargs = {'train': True, 'download': True, 'transform': transform}
+        test_set_kwargs = {'train': False, 'download': True, 'transform': transform}
+        # Create dataset and DataLoader
+        train_set = data_set(data_dir, **train_set_kwargs)
+        test_set = data_set(data_dir, **test_set_kwargs)
+        # Arguments for data loader
+        batch_size = args.batch_size if not(args.test) else 1000
+        train_loader_kwargs = {'num_workers': 0, 'batch_size': batch_size, 'shuffle': True}
+        test_loader_kwargs = {'num_workers': 0, 'batch_size': batch_size, 'shuffle': True}
+        if args.cuda:
+            train_loader_kwargs['pin_memory'] = True
+        if not args.test and args.do_permute_train_labels:
+            # Permute the labels randomly to test 'Rethinking Generalization'
+            train_set.train_labels = torch.LongTensor(np.random.permutation(train_set.train_labels))
+        args.env = torch.utils.data.DataLoader(train_set, **train_loader_kwargs)
+        args.val_env = torch.utils.data.DataLoader(test_set, **test_loader_kwargs)
+    
     assert hasattr(args, 'env')
 
 
@@ -266,7 +264,7 @@ def test_model(args):
         # args.test_fun(args.algorithm.model, args.env, max_episode_length=args.batch_size, n_episodes=100, chkpt_dir=args.chkpt_dir)
         args.rend_fun(args.algorithm.model, args.env, max_episode_length=args.batch_size)
     else:
-        args.test_fun(args.algorithm.model, args.env, cuda=args.cuda, chkpt_dir=args.chkpt_dir)
+        args.test_fun(args.algorithm.model, args.val_env, cuda=args.cuda, chkpt_dir=args.chkpt_dir)
         #args.rend_fun(args.algorithm.mode, args.env, max_episode_length=args.batch_size)
 
 
@@ -317,8 +315,8 @@ if __name__ == '__main__':
         print("Could not load best model after training: ", best_e)
         try:
             args.algorithm.load_checkpoint(args.chkpt_dir, load_best=False)
-        except FileNotFoundError as latest_e:
-            print("Could not load latest model after training: ", latest_e)
+        except FileNotFoundError as e:
+            print("Could not load latest model after training: ", e)
         else:
             test_model(args)
     else:

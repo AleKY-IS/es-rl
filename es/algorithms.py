@@ -59,7 +59,7 @@ class Algorithm(object):
 
     __metaclass__ = ABCMeta
 
-    def __init__(self, model, env, optimizer, lr_scheduler, eval_fun, perturbations, batch_size, max_generations, safe_mutation, no_antithetic, val_env=None, workers=mp.cpu_count(), chkpt_dir=None, chkpt_int=600, track_parallel=False, cuda=False, silent=False):
+    def __init__(self, model, env, optimizer, lr_scheduler, eval_fun, perturbations, batch_size, max_generations, safe_mutation, no_antithetic, val_env=None, val_every=25, workers=mp.cpu_count(), chkpt_dir=None, chkpt_int=600, track_parallel=False, cuda=False, silent=False):
         self.algorithm = self.__class__.__name__
         # Algorithmic attributes
         self.model = model
@@ -73,6 +73,7 @@ class Algorithm(object):
         self.perturbations = perturbations
         self.batch_size = batch_size
         self.max_generations = max_generations
+        self.val_every = val_every
         # Execution attributes
         self.workers = workers if workers <= mp.cpu_count() else mp.cpu_count()
         self.track_parallel = track_parallel
@@ -325,7 +326,6 @@ class Algorithm(object):
             raise NotImplementedError('The SM-R safe mutation is not yet implemented')
         else:
             raise ValueError('The type ''{:s}'' of safe mutations is unrecognized'.format(self.safe_mutation))
-        # IPython.embed()
         # Remove infs
         if do_numerical:
             overflow = False
@@ -447,6 +447,7 @@ class Algorithm(object):
         s += "Antithetic sampling   {:s}\n".format(str(not self.no_antithetic))
         s += "CUDA                  {:s}\n".format(str(self.cuda))
         s += "Workers               {:d}\n".format(self.workers)
+        s += "Validation interval   {:d}\n".format(self.val_every)
         s += "Checkpoint interval   {:d}s\n".format(self.chkpt_int)
         s += "Checkpoint directory  {:s}\n".format(self.chkpt_dir)
         if self.chkpt_dir is not None:
@@ -470,9 +471,11 @@ class Algorithm(object):
                          self.stats['return_min'][-1],  self.stats['unp_rank'][-1],
                          self.stats['lr_0'][-1])
             if 'accuracy_unp' in self.stats.keys():
-                s += ' | TA {0:5.1f}%'.format(self.stats['accuracy_unp'][-1]*100)
-            if 'accuracy_unp' in self.stats.keys() and self.stats['accuracy_val'] is not None:
-                s += ' | VA {0:5.1f}%'.format(self.stats['accuracy_val'][-1]*100)
+                s += ' | TA {:5.1f}%'.format(self.stats['accuracy_unp'][-1]*100)
+            if 'return_val' in self.stats.keys() and self.stats['return_val'][-1] is not None:
+                s += ' | VF {:7.2f}'.format(self.stats['return_val'][-1])
+            if 'accuracy_val' in self.stats.keys() and self.stats['accuracy_val'][-1] is not None:
+                s += ' | VA {:5.1f}%'.format(self.stats['accuracy_val'][-1]*100)
             print(s, end='')
         except Exception:
             print('Could not print_iter', end='')
@@ -646,9 +649,9 @@ class Algorithm(object):
             print("\n" + self.__class__.__name__ + ' algorithm restored from state dict.')
 
 
-class EvolutionaryStrategy(Algorithm):
+class StochasticGradientEstimation(Algorithm):
     def __init__(self, model, env, optimizer, lr_scheduler, eval_fun, perturbations, batch_size, max_generations, safe_mutation, no_antithetic, **kwargs):
-        super(EvolutionaryStrategy, self).__init__(model, env, optimizer, lr_scheduler, eval_fun, perturbations, batch_size, max_generations, safe_mutation, no_antithetic, **kwargs)
+        super(StochasticGradientEstimation, self).__init__(model, env, optimizer, lr_scheduler, eval_fun, perturbations, batch_size, max_generations, safe_mutation, no_antithetic, **kwargs)
 
     def _eval_wrap(self, seed, **kwargs):
         """Get a perturbed model and a copy of the environment and evaluate the perturbation.
@@ -673,7 +676,6 @@ class EvolutionaryStrategy(Algorithm):
             start_generation = self.lr_scheduler.last_epoch + 1
             max_unperturbed_return = self._max_unp_return
         # Initialize variables independent of state
-        self.test_every = 2
         if self.workers > 1: pool = mp.Pool(processes=self.workers)
         if self.track_parallel and "DISPLAY" in os.environ: pb = PoolProgress(pool, update_interval=.5, keep_after_done=False, title='Evaluating perturbations')
         best_algorithm_stdct = None
@@ -706,7 +708,7 @@ class EvolutionaryStrategy(Algorithm):
                 # Execute all perturbations on the pool of processes
                 workers_out = pool.map_async(partial(self._eval_wrap, **eval_kwargs), seeds)
                 unperturbed_out = pool.apply_async(self.eval_fun, (self.model, self.env, 42), eval_kwargs_unp)
-                if self.val_env is not None and n_generation % self.test_every == 0:
+                if self.val_env is not None and n_generation % self.val_every == 0:
                     unperturbed_test_out = pool.apply_async(self.eval_fun, (self.model, self.val_env, 42))
                 else:
                     unperturbed_test_out = None
@@ -720,7 +722,7 @@ class EvolutionaryStrategy(Algorithm):
             else:
                 # Execute sequentially
                 unperturbed_out = self.eval_fun(self.model, self.env, 42, **eval_kwargs_unp)
-                if self.val_env is not None and n_generation % self.test_every == 0:
+                if self.val_env is not None and n_generation % self.val_every == 0:
                     unperturbed_test_out = self.eval_fun(self.model, self.val_env, 42)
                 else:
                     unperturbed_test_out = {k: None for k in unperturbed_out.keys()}
@@ -770,7 +772,7 @@ class EvolutionaryStrategy(Algorithm):
         print("\nTraining done\n\n")
 
 
-class ES(EvolutionaryStrategy):
+class ES(StochasticGradientEstimation):
     """Simple regular gradient evolution strategy based on an isotropic Gaussian search distribution.
 
     The ES algorithm can be derived in the framework of Variational Optimization (VO).
@@ -930,7 +932,7 @@ class NES(ES):
         return retrn * (eps.pow(2).sum() - eps.numel()) / (2 * self.perturbations)
 
 
-class sES(EvolutionaryStrategy):
+class sES(StochasticGradientEstimation):
     """Simple Seperable Evolution Strategy
 
     An algorithm based on an Evolution Strategy (ES) using a Gaussian search distribution.
@@ -1215,7 +1217,7 @@ class sNES(sES):
             assert not np.isinf(self.beta.grad.data).any()
 
 
-class xNES(EvolutionaryStrategy):
+class xNES(StochasticGradientEstimation):
     def __init__(self, model, env, optimizer, lr_scheduler, eval_fun, perturbations, batch_size, max_generations, safe_mutation, no_antithetic, sigma, optimize_sigma=None, **kwargs):
         super(xNES, self).__init__(model, env, optimizer, lr_scheduler, eval_fun, perturbations, batch_size, max_generations, safe_mutation, no_antithetic, **kwargs)
         assert optimize_sigma in ['per-layer', 'per-weight']
