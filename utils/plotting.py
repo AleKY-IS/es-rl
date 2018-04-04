@@ -117,9 +117,18 @@ def timeseries_mean_grouped(xdatas, ydatas, groups, xlabel, ylabel, figsize=(6.4
     sns.set(color_codes=True)
     plt.figure(figsize=figsize)
     legend = []
-    colors = plt.cm.rainbow(np.linspace(0, 1, len(np.unique(groups))))
-    for g, c in zip(set(groups), colors):
-        gstr = 'G{0:02d}'.format(g)
+    n_groups = len(np.unique(groups))
+    if n_groups <= 6:
+        colors = plt.cm.inferno(np.linspace(0, 1, 6))
+        colors = np.reshape(np.append(colors[0::2], colors[1::2]), (6, 4))
+    else:
+        colors = plt.cm.inferno(np.linspace(0, 1, n_groups))
+    sns.set_style("ticks")
+    for g, c in zip(set(groups), colors[0:n_groups]):
+        if type(g) in [str, np.str, np.str_]:
+            gstr = g
+        else:
+            gstr = 'G{0:02d}'.format(g)
         legend.append(gstr)
         g_indices = np.where(groups == g)[0]
         ydatas_grouped = [ydatas[i] for i in g_indices]
@@ -193,7 +202,7 @@ def plot_stats(stats_file, chkpt_dir, wide_figure=True):
 
     # Invert sign on negative returns (negative returns indicate a converted minimization problem)
     if (np.array(stats['return_max']) < 0).all():
-        for k in ['return_unp', 'return_avg', 'return_min', 'return_max']:
+        for k in ['return_unp', 'return_avg', 'return_min', 'return_max', 'return_val']:
             stats[k] = [-s for s in stats[k]]
 
     # Computations/Transformations
