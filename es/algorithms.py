@@ -59,11 +59,12 @@ class Algorithm(object):
 
     __metaclass__ = ABCMeta
 
-    def __init__(self, model, env, optimizer, lr_scheduler, eval_fun, perturbations, batch_size, max_generations, safe_mutation, no_antithetic, workers=mp.cpu_count(), chkpt_dir=None, chkpt_int=600, track_parallel=False, cuda=False, silent=False):
+    def __init__(self, model, env, optimizer, lr_scheduler, eval_fun, perturbations, batch_size, max_generations, safe_mutation, no_antithetic, val_env=None, workers=mp.cpu_count(), chkpt_dir=None, chkpt_int=600, track_parallel=False, cuda=False, silent=False):
         self.algorithm = self.__class__.__name__
         # Algorithmic attributes
         self.model = model
         self.env = env
+        self.val_env = val_env
         self.optimizer = optimizer
         self.lr_scheduler = lr_scheduler
         self.eval_fun = eval_fun
@@ -98,7 +99,7 @@ class Algorithm(object):
         elif type(self.env) is torch.utils.data.DataLoader:
             self.sens_inputs = next(iter(self.env))[0]
         if self.safe_mutation is None:
-            self.sens_inputs = self.sens_inputs[0].view(1, *self.sens_inputs.size()[1:])
+            self.sens_inputs = self.sens_inputs[0:2] # self.sens_inputs[0].view(1, *self.sens_inputs.size()[1:])
         # Attributes to exclude from the state dictionary
         self.exclude_from_state_dict = {'env', 'optimizer', 'lr_scheduler', 'model', 'stats', 'sens_inputs'}
         # Initialize dict for saving statistics
@@ -297,13 +298,13 @@ class Algorithm(object):
             self.model.cuda()
         if self.safe_mutation is None:
             # Dummy backprop to initialize gradients, then return
-            output = self.model(inputs[0].view(1,*inputs[0].size()))
+            output = self.model(inputs)
             if self.cuda:
                 t = torch.cuda.FloatTensor(1, output.data.size()[1]).fill_(0)
             else:
                 t = torch.zeros(1, output.data.size()[1])
-            t[0,0] = 1
-            output.backward(t)
+            t[0, 0] = 1
+            output[0].backward(t)
             self.model.zero_grad()
             return
         outputs = self.model(inputs)
@@ -469,7 +470,9 @@ class Algorithm(object):
                          self.stats['return_min'][-1],  self.stats['unp_rank'][-1],
                          self.stats['lr_0'][-1])
             if 'accuracy_unp' in self.stats.keys():
-                s += ' | C {0:5.1f}%'.format(self.stats['accuracy_unp'][-1]*100)
+                s += ' | TA {0:5.1f}%'.format(self.stats['accuracy_unp'][-1]*100)
+            if 'accuracy_unp' in self.stats.keys() and self.stats['accuracy_val'] is not None:
+                s += ' | VA {0:5.1f}%'.format(self.stats['accuracy_val'][-1]*100)
             print(s, end='')
         except Exception:
             print('Could not print_iter', end='')
@@ -542,11 +545,11 @@ class Algorithm(object):
 
                         # raise ValueError('An added optimized parameter must be stored in the state dict to enable loading, `{}` was not'.format(p['label']))
 
-    def _store_stats(self, workers_out, unperturbed_out, generation, rank, workers_time):
+    def _store_stats(self, workers_out, unperturbed_out, unperturbed_test_out, generation, rank, workers_time):
         # Check existence of required keys. Create if not there.
         ks = filter(lambda k: k != 'seed', workers_out.keys())
         add_dict = {}
-        for k in ks: add_dict.update({k + suffix: [] for suffix in ['_min', '_max', '_avg', '_var', '_sum', '_unp']})
+        for k in ks: add_dict.update({k + suffix: [] for suffix in ['_min', '_max', '_avg', '_var', '_sum', '_unp', '_val']})
         if not set(add_dict.keys()).issubset(set(self.stats.keys())):
             self.stats.update(add_dict)
         # Append data
@@ -564,6 +567,7 @@ class Algorithm(object):
                 self.stats[k + '_var'].append(np.var(v))
                 self.stats[k + '_sum'].append(np.sum(v))
                 self.stats[k + '_unp'].append(unperturbed_out[k])
+                self.stats[k + '_val'].append(unperturbed_test_out[k])
 
     def _dump_stats(self):
         # Store stats as csv file on drive such that self does not grow in size
@@ -669,6 +673,7 @@ class EvolutionaryStrategy(Algorithm):
             start_generation = self.lr_scheduler.last_epoch + 1
             max_unperturbed_return = self._max_unp_return
         # Initialize variables independent of state
+        self.test_every = 2
         if self.workers > 1: pool = mp.Pool(processes=self.workers)
         if self.track_parallel and "DISPLAY" in os.environ: pb = PoolProgress(pool, update_interval=.5, keep_after_done=False, title='Evaluating perturbations')
         best_algorithm_stdct = None
@@ -701,12 +706,24 @@ class EvolutionaryStrategy(Algorithm):
                 # Execute all perturbations on the pool of processes
                 workers_out = pool.map_async(partial(self._eval_wrap, **eval_kwargs), seeds)
                 unperturbed_out = pool.apply_async(self.eval_fun, (self.model, self.env, 42), eval_kwargs_unp)
+                if self.val_env is not None and n_generation % self.test_every == 0:
+                    unperturbed_test_out = pool.apply_async(self.eval_fun, (self.model, self.val_env, 42))
+                else:
+                    unperturbed_test_out = None
                 if self.track_parallel and "DISPLAY" in os.environ: pb.track(workers_out)
                 workers_out = workers_out.get(timeout=3600)
                 unperturbed_out = unperturbed_out.get(timeout=3600)
+                if unperturbed_test_out is None:
+                    unperturbed_test_out = {k: None for k in unperturbed_out.keys()}
+                else:
+                    unperturbed_test_out = unperturbed_test_out.get(timeout=3600)
             else:
                 # Execute sequentially
                 unperturbed_out = self.eval_fun(self.model, self.env, 42, **eval_kwargs_unp)
+                if self.val_env is not None and n_generation % self.test_every == 0:
+                    unperturbed_test_out = self.eval_fun(self.model, self.val_env, 42)
+                else:
+                    unperturbed_test_out = {k: None for k in unperturbed_out.keys()}
                 workers_out = []
                 for s in seeds:
                     workers_out.append(self._eval_wrap(s, **eval_kwargs))
@@ -731,8 +748,6 @@ class EvolutionaryStrategy(Algorithm):
                 self.lr_scheduler.step()
 
             # Keep track of best model
-            # TODO bm, bo, ba, mur = self.update_best(unperturbed_out['return'], mur)
-            # TODO Maybe not evaluate unperturbed model every iteration
             if unperturbed_out['return'] >= max_unperturbed_return:
                 best_model_stdct = self.model.state_dict()
                 best_optimizer_stdct = self.optimizer.state_dict()
@@ -740,7 +755,7 @@ class EvolutionaryStrategy(Algorithm):
                 max_unperturbed_return = unperturbed_out['return']
 
             # Print and checkpoint
-            self._store_stats(workers_out, unperturbed_out, n_generation, rank, workers_time)
+            self._store_stats(workers_out, unperturbed_out, unperturbed_test_out, n_generation, rank, workers_time)
             self.print_iter()
             if last_checkpoint_time < time.time() - self.chkpt_int:
                 self.save_checkpoint(best_model_stdct, best_optimizer_stdct, best_algorithm_stdct)
@@ -753,56 +768,6 @@ class EvolutionaryStrategy(Algorithm):
             pool.close()
             pool.join()
         print("\nTraining done\n\n")
-
-        # # For python multiprocessing: Using apply_async and eval_fun
-        # t = time.time()
-        # unperturbed_out = pool.apply_async(self.eval_fun, (self.model, self.env, 42), eval_kwargs_unp)
-        # workers_out = []
-        # for i in range(self.perturbations):
-        #     model = self.perturb_model(s)
-        #     workers_out.append(pool.apply_async(self.eval_fun, (model, self.env, seeds[i]), eval_kwargs))
-        # for w in workers_out:
-        #     w.get(600)
-        # unperturbed_out.get(600)
-        # print(time.time() - t)
-        # # 14.81, 18.6
-
-        # # For python multiprocessing: Using starmap and eval_fun
-        # t = time.time()
-        # unperturbed_out = pool.apply_async(self.eval_fun, (self.model, self.env, 42), eval_kwargs_unp)
-        # inputs = []
-        # models = []
-        # for s in seeds:
-        #     model = self.perturb_model(s)
-        #     # models.append(model)
-        #     inputs.append((model, self.env, s))
-        # workers_out = pool.starmap_async(self.eval_fun, inputs)
-        # workers_out.get(600)
-        # unperturbed_out.get(600)
-        # print(time.time() - t)
-        # # 34.24, 33.54, 38.23, 35.39
-
-        # # For python multiprocessing: map_async using eval_wrap (original)
-        # t = time.time()
-        # workers_out = pool.map_async(partial(self._eval_wrap, **eval_kwargs), seeds)
-        # unperturbed_out = pool.apply_async(self.eval_fun, (self.model, self.env, 42), eval_kwargs_unp)
-        # workers_out.get(600)
-        # unperturbed_out.get(600)
-        # print(time.time() - t)
-        # 17.19, 14.69, 13.86, 15.26, 18.71
-
-        # # Sequential
-        # t = time.time()
-        # unperturbed_out = self.eval_fun(self.model, self.env, 42, **eval_kwargs_unp)
-        # workers_out = []
-        # for s in seeds:
-        #     workers_out.append(self._eval_wrap(s, **eval_kwargs))
-        # print(time.time() - t)
-        # # 25.36, 26.03, 32.63, 25.48
-
-        # For Pathos
-        # workers_out = pool.amap(self._eval_wrap, seeds, **eval_kwargs)
-        # unperturbed_out = pool.amap(self.eval_fun, (self.model, self.env, 42, eval_kwargs_unp))
 
 
 class ES(EvolutionaryStrategy):
