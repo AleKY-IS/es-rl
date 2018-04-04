@@ -4,7 +4,7 @@
 import os
 import argparse
 import IPython
-
+import filesystem as fs
 
 if __name__ == '__main__':
     # Ask to continue
@@ -12,7 +12,7 @@ if __name__ == '__main__':
     if r not in ['y', 'Y']:
         print('Script ended. No files deleted.')
         exit(0)
-    IPython.embed()
+    
     # Input
     parser = argparse.ArgumentParser(description='Experiments')
     parser.add_argument('-d', type=str, metavar='directory', help='Directory to clean')
@@ -20,18 +20,28 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     # Validate
-    if args.d is None and args.f is None:
-        args.d = '/home/jakob/Dropbox/es-rl/experiments/checkpoints'
-        args.f = ['state-dict-algorithm.pkl', 'state-dict-optimizer.pkl', 'state-dict-model.pkl']
-    assert args.d is not None and args.f is not None
+    if args.d is None:
+        this_file_dir_local = os.path.dirname(os.path.abspath(__file__))
+        package_root_this_file = fs.get_parent(this_file_dir_local, 'es-rl')
+        args.d = os.path.join(package_root_this_file, 'experiments', 'checkpoints')
+    if args.f is None:
+        args.keep = ['state-dict-algorithm.pkl', 'stats.csv']
+        args.delete = []
+        # args.delete = args.f
+        # args.f = ['state-dict-best-algorithm.pkl', 'state-dict-best-optimizer.pkl', 
+        #           'state-dict-best-model.pkl', 'state-dict-optimizer.pkl',
+        #           'state-dict-model.pkl']
+    assert args.d is not None and args.delete is not None
 
     # Run
     for root, directories, filenames in os.walk(args.d):
         i = 0
         for filename in filenames:
-            if filename in args.f:
+            if filename in args.delete:
                 os.remove(os.path.join(root, filename))
                 i += 1
+            if filename not in args.keep:
+                os.remove(os.path.join(root, filename))
         if len(filenames) == 1 and filenames[0] == 'init.log':
             os.remove(os.path.join(root, filenames[0]))
             os.rmdir(os.path.join(root))
