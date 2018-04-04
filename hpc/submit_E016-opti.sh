@@ -58,12 +58,11 @@ FOO=${CORES:="8"}
 FOO=${TIME_LIMIT:="72:00"}
 
 # List of input strings to the call
-ID="E016-bn-init"
-COMMON_IN="--id ${ID} --workers ${CORES} --algorithm sNES --optimize-sigma single --env-name MNIST --optimizer Adam --lr 0.05 --cov-lr 0.05 --perturbations 100 --max-generations 1000 --batch-size 1000 --safe-mutation SUM --chkpt-int 1200 --lr-scheduler ExponentialLR --gamma 1"
+ID="E016-opti"
+COMMON_IN="--id ${ID} --workers ${CORES} --algorithm sNES --optimize-sigma single --env-name MNIST --model MNISTNet --lr 0.05 --cov-lr 0.05 --perturbations 100 --max-generations 1000 --batch-size 1000 --safe-mutation SUM --chkpt-int 1200 --lr-scheduler ExponentialLR --gamma 1"
 declare -a INPUTS=(
-					"$COMMON_IN --model MNISTNet"
-					"$COMMON_IN --model MNISTNetNoBN"
-					"$COMMON_IN --model MNISTNetNoInit"
+					"$COMMON_IN --optimizer Adam"
+					"$COMMON_IN --optimizer SGD --momentum 0.9"
 				   )
 SCRIPT="run_hpc.sh"
 REPEATS=30
