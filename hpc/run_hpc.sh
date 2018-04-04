@@ -19,6 +19,9 @@ module load scipy/0.19.1-python-3.6.2
 # Activate ml envrionment
 source ~/ml/bin/activate
 
+# Set open file limit
+ulimit -Sn 32768
+
 # Set $HOME if running as a bsub script
 if [ -z "$BSUB_O_WORKDIR" ]; then
     export HOME=$BSUB_O_WORKDIR
