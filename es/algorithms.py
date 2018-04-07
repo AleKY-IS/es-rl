@@ -25,7 +25,7 @@ from context import utils
 from utils.misc import get_inputs_from_dict, to_numeric
 from utils.plotting import plot_stats
 from utils.progress import PoolProgress
-from utils.torchutils import torch_summarize
+from utils.torchutils import summarize_model
 
 
 def count_model_parameters(model, only_trainable=True):
@@ -425,7 +425,7 @@ class Algorithm(object):
         s += "\n==================== MODEL ====================\n"
         s += "Summary of " + self.model.__class__.__name__ + "\n\n"
         self.model.eval()
-        model_summary = torch_summarize(input_size=self.sens_inputs[0].size(), model=self.model)
+        model_summary = summarize_model(input_size=self.sens_inputs[0].size(), model=self.model)
         s += model_summary.to_string() + "\n\n"
         s += "Parameters: {:d}".format(model_summary.n_parameters.sum()) + "\n"
         s += "Trainable parameters: {:d}".format(model_summary.n_trainable.sum()) + "\n"
