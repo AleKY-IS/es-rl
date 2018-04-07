@@ -15,7 +15,7 @@ set -e
 #     export HOME=$PBS_O_WORKDIR
 # fi
 
-# change 
+# Append correct cmake version to path
 export PATH=/appl/cmake/2.8.12.2/bin:$PATH
 cmake --version
 
@@ -26,10 +26,11 @@ module load opencv/3.3.1-python-3.6.2
 module load numpy/1.13.1-python-3.6.2-openblas-0.2.20
 module load scipy/0.19.1-python-3.6.2
 
-which python3
-
 # # Use HOME directory as base
 # cd $HOME
+
+# Set open file limit
+ulimit -Sn 32768
 
 # Setup virtual env
 if [ ! -d ~/ml ]
