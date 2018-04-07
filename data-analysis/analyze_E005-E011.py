@@ -34,8 +34,8 @@ args = parser.parse_args()
 
 if not args.d:
     # args.d = "/home/jakob/mnt/Documents/es-rl/experiments/checkpoints/E005"   # Linux HPC
-    args.d = "/home/jakob/Dropbox/es-rl/experiments/checkpoints/E005-sca"     # Linux
-    # args.d = "/Users/Jakob/mnt/Documents/es-rl/experiments/checkpoints/E005"  # Mac
+    # args.d = "/home/jakob/Dropbox/es-rl/experiments/checkpoints/E005-sca"     # Linux
+    args.d = "/Users/Jakob/mnt/Documents/es-rl/experiments/checkpoints/E011-sca"  # Mac
     # args.d = "/home/jakob/mnt/Documents/es-rl/experiments/checkpoints/E011"   # Linux HPC
     # args.d = "/home/jakob/Dropbox/es-rl/experiments/checkpoints/E011-sca"     # Linux 
 

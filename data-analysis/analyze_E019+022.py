@@ -1,124 +1,117 @@
 import os
+import warnings
 
 import IPython
 import matplotlib.pyplot as plt
 import numpy as np
-import scipy as sp
 import pandas as pd
-
+import scipy as sp
 import torch
+
 from context import utils
 import utils.filesystem as fs
 import utils.plotting as plot
+from utils.data_analysis import invert_signs, load_stats
 from utils.misc import get_equal_dicts, length_of_longest
-from data_analysis import load_stats, invert_signs
 
 
-def create_plots(stats_list, keys_to_monitor, groups):
-    unique_groups = set(groups)
-    n_keys = len(keys_to_monitor)
+def create_plots(stats_list, keys_to_plot, groups, result_dir, include_val=True):
+    n_keys = len(keys_to_plot)
     n_chars = len(str(n_keys))
     f = '    {:' + str(n_chars) + 'd}/{:' + str(n_chars) + 'd} monitored keys plotted'
-    for i_key, k in enumerate(keys_to_monitor):
+    groups_org = groups.copy()
+    for i_key, k in enumerate(keys_to_plot):
+        # Get data and subset only those series that are done (or the one that is the longest)
+        groups = groups_org.copy()
         list_of_series = [s[k].tolist() for s in stats_list if k in s]
-        list_of_genera = [range(len(s)) for s in stats_list if k in s]
-
-        plot.timeseries(list_of_genera, list_of_series, xlabel='generations', ylabel=k)
-        plt.savefig(os.path.join(analysis_dir, k + '-all-series.pdf'), bbox_inches='tight')
-        plt.close()
-
-        plot.timeseries_distribution(list_of_genera, list_of_series, xlabel='generations', ylabel=k)
-        plt.savefig(os.path.join(analysis_dir, k + '-all-distribution.pdf'), bbox_inches='tight')
-        plt.close()
-
-        plot.timeseries_median(list_of_genera, list_of_series, xlabel='generations', ylabel=k)
-        plt.savefig(os.path.join(analysis_dir, k + '-all-median.pdf'), bbox_inches='tight')
-        plt.close()
-
-        plot.timeseries_final_distribution(list_of_series, label=k, ybins=len(list_of_series)*10)
-        plt.savefig(os.path.join(analysis_dir, k + '-all-final-distribution.pdf'), bbox_inches='tight')
-        plt.close()
-
-        # Subset only those series that are done (or the one that is the longest)
+        list_of_genera = [range(len(s)) for s in stats_list if k in s]  
         l = length_of_longest(list_of_series)
         indices = [i for i, series in enumerate(list_of_series) if len(series) == l]
-        list_of_longest_series = [list_of_series[i] for i in indices]
-        list_of_longest_genera = [list_of_genera[i] for i in indices]
-        groups_longest_series = groups[indices]
-        plot.timeseries_mean_grouped(list_of_longest_genera, list_of_longest_series, groups_longest_series, xlabel='generations', ylabel=k)
-        plt.savefig(os.path.join(analysis_dir, k + '-all-series-mean-sd' + '.pdf'), bbox_inches='tight')
+        groups = groups[indices]
+        list_of_series = [list_of_series[i] for i in indices]
+        list_of_genera = [list_of_genera[i] for i in indices]
+
+        # Validation series
+        if include_val:
+            val_k = k[:-4] + '_val'
+            list_of_series_val = [s[val_k].tolist() for i, s in enumerate(stats_list) if val_k in s and i in indices]
+        if include_val and not len(list_of_series_val) == 0:
+            list_of_genera_val = [np.where(~np.isnan(l))[0].tolist() for l in list_of_series_val]
+            list_of_genera.extend(list_of_genera_val)
+            list_of_series_val = [np.array(l) for l in list_of_series_val]
+            list_of_series_val = [l[~np.isnan(l)].tolist() for l in list_of_series_val]
+            list_of_series.extend(list_of_series_val)
+            groups_val = np.array([g + ', Validation' for g in groups])
+            groups = np.append(groups, groups_val)
+
+        # Sort
+        list_of_genera = [x for _,x in sorted(zip(groups.tolist(), list_of_genera))]
+        list_of_series = [x for _,x in sorted(zip(groups.tolist(), list_of_series))]
+        groups.sort()
+
+        # Plot
+        plot.timeseries_mean_grouped(list_of_genera, list_of_series, groups, xlabel='generations', ylabel=k)
+        if 'return' in k:
+            plt.gca().set_ylim(0, 1)
+        elif 'accuracy' in k:
+            plt.gca().set_ylim(0.6, 1)
+        plt.savefig(os.path.join(result_dir, k + '-all-series-mean-sd' + '.pdf'), bbox_inches='tight')
         plt.close()
-
-        if len(unique_groups) > 1:
-            for g in unique_groups:
-                if type(g) in [str, np.str, np.str_]:
-                    gstr = g
-                else:
-                    gstr = 'G{0:02d}'.format(g)
-                g_indices = np.where(groups == g)[0]
-                group_stats = [stats_list[i] for i in g_indices]
-
-                list_of_series = [s[k].tolist() for s in group_stats if k in s]
-                list_of_genera = [range(len(s)) for s in group_stats if k in s]
-                if list_of_genera and list_of_series:
-                    plot.timeseries(list_of_genera, list_of_series, xlabel='generations', ylabel=k)
-                    plt.savefig(os.path.join(analysis_dir, k + '-group-' + gstr + '-series.pdf'), bbox_inches='tight')
-                    plt.close()
-
-                    plot.timeseries_distribution(list_of_genera, list_of_series, xlabel='generations', ylabel=k)
-                    plt.savefig(os.path.join(analysis_dir, k + '-group-' + gstr + '-distribution.pdf'), bbox_inches='tight')
-                    plt.close()
-
-                    plot.timeseries_median(list_of_genera, list_of_series, xlabel='generations', ylabel=k)
-                    plt.savefig(os.path.join(analysis_dir, k + '-group-' + gstr + '-median.pdf'), bbox_inches='tight')
-                    plt.close()
-
-                    plot.timeseries_final_distribution(list_of_series, label=k, ybins=len(list_of_series)*10)
-                    plt.savefig(os.path.join(analysis_dir, k + '-group-' + gstr + '-final-distribution.pdf'), bbox_inches='tight')
-                    plt.close()
-
+        # Progress
         if i_key + 1 == n_keys:
             print(f.format(i_key+1, n_keys), end='\n')
         else:
             print(f.format(i_key+1, n_keys), end='\r')
 
-# Data directories
-i = 'E015-AS'
-keys_to_plot = {'return_unp', 'return_avg', 'accuracy_unp', 'accuracy_avg', 'sigma_med'}
-this_file_dir_local = os.path.dirname(os.path.abspath(__file__))
-package_root_this_file = fs.get_parent(this_file_dir_local, 'es-rl')
-d = os.path.join(package_root_this_file, 'experiments', 'checkpoints', i)
-directories = [os.path.join(d, di) for di in os.listdir(d) if os.path.isdir(os.path.join(d, di)) and di != 'monitoring']
-analysis_dir = os.path.join(d, str(i) + '-analysis')
-if not os.path.exists(analysis_dir):
-    os.mkdir(analysis_dir)
 
-# Load
-stats = []
-groups = np.array([])
-for d in directories:
-    try:
-        s = torch.load(os.path.join(d, 'state-dict-best-algorithm.pkl'))
-        if s['no_antithetic']:
-            groups = np.append(groups, 'No antithetic (' + str(s['perturbations']) + ')')
-        else:
-            groups = np.append(groups, 'Antithetic (' + str(s['perturbations']) + ')')
-        st = pd.read_csv(os.path.join(d, 'stats.csv'))
-        st = st[0:1000]
-        stats.append(st)
-    except:
-        print("None in: " + d)
-
-# Plot
-invert_signs(stats)
-create_plots(stats, keys_to_plot, groups)
+def get_directories(experiment_id):
+    # Get directories to analyze
+    this_file_dir_local = os.path.dirname(os.path.abspath(__file__))
+    package_root_this_file = fs.get_parent(this_file_dir_local, 'es-rl')
+    d = os.path.join(package_root_this_file, 'experiments', 'checkpoints', experiment_id)
+    directories = [os.path.join(d, di) for di in os.listdir(d) if os.path.isdir(os.path.join(d, di))]
+    directories = [d for d in directories if 'monitoring' not in d and 'analysis' not in d]
+    # Create result directory
+    result_dir = os.path.join(d, str(experiment_id) + '-analysis')
+    if not os.path.exists(result_dir):
+        os.mkdir(result_dir)
+    return directories, result_dir
 
 
-# sns.set(color_codes=True)
-# plt.figure(figsize=figsize)
-# legend = []
-# colors = plt.cm.rainbow(np.linspace(0, 1, len(np.unique(groups))))
+def analyze(experiment_id, optimizer, keys_to_plot):
+    directories, result_dir = get_directories(experiment_id)
+    if len(directories) == 0:
+        print('No results for {}'.format(experiment_id))
+        return
+    # Load
+    stats = []
+    groups = np.array([])
+    for d in directories:
+        try:
+            s = torch.load(os.path.join(d, 'state-dict-best-algorithm.pkl'))
+            if s['no_antithetic']:
+                groups = np.append(groups, 'No antithetic (' + str(s['perturbations']) + ' perturbations)' + optimizer)
+            else:
+                groups = np.append(groups, 'Antithetic (' + str(s['perturbations']) + ' perturbations)' + optimizer)
+            st = pd.read_csv(os.path.join(d, 'stats.csv'))
+            stats.append(st)
+        except:
+            print("None in: " + d)
+    # Plot
+    invert_signs(stats)
+    create_plots(stats, keys_to_plot, groups, result_dir)
 
-# ydatas = [s['']]
 
-# ax = sns.tsplot(value=ylabel, data=ydata_subsampled, time=x_subsampled, ci="sd", estimator=np.mean, color=c)
+if __name__ == '__main__':
+    # Ignore warnings from matplotlib
+    warnings.filterwarnings("ignore", module="matplotlib")
+    # Experiment IDs
+    experiment_ids = ['E019-AS', 'E022-AS']
+    # Optimizer labels
+    # optimizers = [', SGD', ', ADAM']
+    optimizers = ['', '']
+    # Keys to analyze
+    keys_to_plot = ['return_unp', 'return_avg', 'accuracy_unp', 'accuracy_avg', 'sigma']
+    # Analyze
+    for experiment_id, optimizer in zip(experiment_ids, optimizers):
+        analyze(experiment_id, optimizer, keys_to_plot)
