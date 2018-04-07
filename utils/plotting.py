@@ -13,7 +13,7 @@ import torch
 from cycler import cycler
 
 from utils.misc import get_longest_sublists
-
+from utils.data_analysis import lookup_labels
 
 def moving_average(y, window=100, center=True):
     """
@@ -112,19 +112,19 @@ def timeseries_final_distribution(datas, label, ybins='auto', figsize=(6.4, 4.8)
     plt.ylabel('Counts')
 
 
-def timeseries_mean_grouped(xdatas, ydatas, groups, xlabel, ylabel, figsize=(6.4, 4.8), points_in_plot=200):
+def timeseries_mean_grouped(xdatas, ydatas, groups, xlabel, ylabel, figsize=(6.4, 4.8), points_in_plot=200, lookup_labels=False):
     assert type(groups) == np.ndarray
     sns.set(color_codes=True)
     plt.figure(figsize=figsize)
     legend = []
     n_groups = len(np.unique(groups))
-    if n_groups <= 6:
-        colors = plt.cm.inferno(np.linspace(0, 1, 6))
-        colors = np.reshape(np.append(colors[0::2], colors[1::2]), (6, 4))
-    else:
-        colors = plt.cm.inferno(np.linspace(0, 1, n_groups))
+    # if n_groups <= 6:
+    #     colors = plt.cm.gnuplot(np.linspace(0, 1, n_groups))
+    #     #colors = np.reshape(np.append(colors[0::2], colors[1::2]), (6, 4))
+    # else:
+    colors = plt.cm.gnuplot(np.linspace(0, 1, n_groups))
     sns.set_style("ticks")
-    for g, c in zip(set(groups), colors[0:n_groups]):
+    for g, c in zip(np.unique(groups), colors[0:n_groups]):
         if type(g) in [str, np.str, np.str_]:
             gstr = g
         else:
@@ -133,7 +133,7 @@ def timeseries_mean_grouped(xdatas, ydatas, groups, xlabel, ylabel, figsize=(6.4
         g_indices = np.where(groups == g)[0]
         ydatas_grouped = [ydatas[i] for i in g_indices]
         length = len(sorted(ydatas_grouped, key=len, reverse=True)[0])
-        nsub = int(length/points_in_plot)
+        nsub = int(length/points_in_plot) if points_in_plot < length else 1
         ydata = np.array([ydata+[np.NaN]*(length-len(ydata)) for ydata in ydatas_grouped])
         # Subsample y
         ydata_subsampled = ydata[:,::nsub] if np.prod(ydata.shape) > nsub else ydata
