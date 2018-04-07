@@ -11,8 +11,7 @@ from torch.autograd import Variable
 from torch.nn.modules.module import _addindent
 
 from context import utils
-from utils.torchutils import torch_summarize, calculate_xavier_gain
-
+from utils.torchutils import summarize_model, calculate_xavier_gain
 
 
 def model_weight_initializer(model):
@@ -69,7 +68,7 @@ class AbstractESModel(nn.Module):
     @property
     def summary(self):
         if not hasattr(self, '_summary'):
-            self._summary = torch_summarize(self, self.in_dim)
+            self._summary = summarize_model(self, self.in_dim)
         return self._summary
 
     def count_parameters(self, only_trainable=True):
@@ -287,22 +286,28 @@ class DQN(AbstractESModel):
         in_channels = observation_space.shape[0]
         out_dim = action_space.n
         self.conv1 = nn.Conv2d(in_channels, out_channels=32, kernel_size=(8, 8), stride=(4, 4))
+        self.conv1_relu = nn.ReLU()
         self.conv2 = nn.Conv2d(32, out_channels=64, kernel_size=(4, 4), stride=(2, 2))
+        self.conv2_relu = nn.ReLU()
         self.conv3 = nn.Conv2d(64, out_channels=64, kernel_size=(3, 3), stride=(1, 1))
+        self.conv3_relu = nn.ReLU()
         n_size = self._get_conv_output(observation_space.shape)
         self.lin1 = nn.Linear(n_size, 512)
+        self.lin1_relu = nn.ReLU()
         self.lin2 = nn.Linear(512, out_dim)
+        self.lin2_logsoftmax = nn.LogSoftmax(dim=1)
         self._initialize_weights()
 
     def forward(self, x):
         x = self._forward_features(x)
         x = x.view(x.size(0), -1)
-        x = F.relu(self.lin1(x))
-        x = F.softmax(self.lin2(x), dim=1)
+        x = self.lin1_relu(self.lin1(x))
+        x = self.lin2_logsoftmax(self.lin2(x))
         return x
 
     def _get_conv_output(self, shape):
-        """ Compute the number of output parameters from convolutional part by forward pass"""
+        """Compute the number of output parameters from convolutional part by forward pass
+        """
         bs = 1
         inputs = Variable(torch.rand(bs, *shape))
         output_feat = self._forward_features(inputs)
@@ -310,9 +315,9 @@ class DQN(AbstractESModel):
         return n_size
 
     def _forward_features(self, x):
-        x = F.relu(self.conv1(x))
-        x = F.relu(self.conv2(x))
-        x = F.relu(self.conv3(x))
+        x = self.conv1_relu(self.conv1(x))
+        x = self.conv2_relu(self.conv2(x))
+        x = self.conv3_relu(self.conv3(x))
         return x
 
 
@@ -350,6 +355,44 @@ class MNISTNet(AbstractESModel):
         x = self.conv2_relu(self.conv2_pool(self.conv2_bn(self.conv2(x))))
         x = x.view(-1, 320)
         x = self.fc1_relu(self.fc1_bn(self.fc1(x)))
+        x = self.fc2_logsoftmax(self.fc2(x))
+        return x
+
+
+class MNISTNetDropout(AbstractESModel):
+    """ 
+    Convolutional neural network for use on the MNIST data set.
+
+    It uses batch normalization to normalize layer outputs before 
+    applying pooling and nonlinearity according to Ioffe (2015) [https://arxiv.org/pdf/1502.03167.pdf]
+    """
+    def __init__(self):
+        super(MNISTNetDropout, self).__init__()
+        self.in_dim = torch.Size((1, 28, 28))
+        self.conv1 = nn.Conv2d(1, 10, kernel_size=(5, 5))
+        self.conv1_pool = nn.MaxPool2d(kernel_size=(2, 2), stride=None, padding=0, dilation=1, return_indices=False, ceil_mode=False)
+        self.conv1_relu = nn.ReLU()
+        self.conv1_dropout = nn.Dropout2d(p=0.1)
+
+        self.conv2 = nn.Conv2d(10, 20, kernel_size=(5, 5))
+        self.conv2_pool = nn.MaxPool2d(kernel_size=(2, 2), stride=None, padding=0, dilation=1, return_indices=False, ceil_mode=False)
+        self.conv2_relu = nn.ReLU()
+        self.conv2_dropout = nn.Dropout2d(p=0.1)
+
+        self.fc1 = nn.Linear(320, 50)
+        self.fc1_relu = nn.ReLU()
+        self.fc1_dropout = nn.Dropout(p=0.5)
+
+        self.fc2 = nn.Linear(50, 10)
+        self.fc2_logsoftmax = nn.LogSoftmax(dim=1)
+
+        self._initialize_weights()
+
+    def forward(self, x):
+        x = self.conv1_dropout(self.conv1_relu(self.conv1_pool(self.conv1(x))))
+        x = self.conv2_dropout(self.conv2_relu(self.conv2_pool(self.conv2(x))))
+        x = x.view(-1, 320)
+        x = self.fc1_dropout(self.fc1_relu(self.fc1(x)))
         x = self.fc2_logsoftmax(self.fc2(x))
         return x
 
