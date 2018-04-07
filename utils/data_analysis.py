@@ -87,12 +87,34 @@ def invert_signs(stats_list, keys='all'):
         keys (dict): [description]
     """
     if keys == 'all':
-        keys = {'return_unp', 'return_max', 'return_min', 'return_avg'}
+        keys = {'return_unp', 'return_max', 'return_min', 'return_avg', 'return_val'}
     for s in stats_list:
         if (np.array(s['return_unp']) < 0).all():
-            for k in {'return_unp', 'return_max', 'return_min', 'return_avg'}.intersection(keys):
-                s[k] = [-retrn for retrn in s[k]]
+            for k in {'return_unp', 'return_max', 'return_min', 'return_avg', 'return_val'}.intersection(keys):
+                s[k] = [-retrn for retrn in s[k] if k in s.keys()]
 
 
 def get_checkpoint_directories(dir):
     return [os.path.join(dir, di) for di in os.listdir(dir) if os.path.isdir(os.path.join(dir, di)) and di != 'monitoring']
+
+
+def lookup_labels(key, mode='supervised'):
+    """Mode can be supervised and reinforcement"""
+    if mode is 'supervised':
+        key2label = {'return_unp': 'Unperturbed model NLL',
+                     'return_max': 'Population max NLL',
+                     'return_min': 'Population minimum NLL',
+                     'return_avg': 'Population average NLL',
+                     'return_var': 'Population NLL variance',
+                     'accuracy_unp': 'Unperturbed model accuracy',
+                     'accuracy_max': 'Population max accuracy',
+                     'accuracy_min': 'Population minimum accuracy',
+                     'accuracy_avg': 'Population average accuracy',
+                     'accuracy_var': 'Population accuracy variance'}
+    else:
+        key2label = {'return_unp': 'Unperturbed model reward',
+                     'return_max': 'Population max reward',
+                     'return_min': 'Population minimum reward',
+                     'return_avg': 'Population average reward',
+                     'return_var': 'Population reward variance'}
+    return key2label[key]
