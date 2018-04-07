@@ -18,7 +18,7 @@ from context import es, utils
 from es.algorithms import GA, ES, NES, sES, sNES, xNES
 from es.envs import create_gym_environment
 from es.eval_funs import gym_render, gym_rollout, gym_test, supervised_eval, supervised_test
-from es.models import ClassicalControlFFN, MujocoFFN, DQN, MNISTNet, MNISTNetNoBN, MNISTNetNoInit, CIFARNet
+from es.models import *
 from torchvision import datasets, transforms
 from utils.misc import get_inputs_from_dict, get_inputs_from_dict_class
 
@@ -135,9 +135,9 @@ def create_model(args):
     elif args.is_supervised:
         args.model = ModelClass()
         if args.env_name == 'MNIST':
-            assert ModelClass in [MNISTNet, MNISTNetNoBN, MNISTNetNoInit]
+            assert ModelClass in [MNISTNet, MNISTNetNoBN, MNISTNetNoInit, MNISTNetDropout]
         elif args.env_name == 'FashionMNIST':
-            assert ModelClass in [MNISTNet, MNISTNetNoBN, MNISTNetNoInit]
+            assert ModelClass in [MNISTNet, MNISTNetNoBN, MNISTNetNoInit, MNISTNetDropout]
         elif args.env_name == 'CIFAR10':
             assert ModelClass in [CIFARNet]
     assert type(args.model) is not str
@@ -201,7 +201,7 @@ def create_environment(args):
         # Arguments for data loader
         batch_size = args.batch_size if not(args.test) else 1000
         train_loader_kwargs = {'num_workers': 0, 'batch_size': batch_size, 'shuffle': True}
-        test_loader_kwargs = {'num_workers': 0, 'batch_size': batch_size, 'shuffle': True}
+        test_loader_kwargs = {'num_workers': 0, 'batch_size': len(test_set), 'shuffle': True}
         if args.cuda:
             train_loader_kwargs['pin_memory'] = True
         if not args.test and args.do_permute_train_labels:
