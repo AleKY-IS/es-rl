@@ -372,12 +372,11 @@ class MNISTNetDropout(AbstractESModel):
         self.conv1 = nn.Conv2d(1, 10, kernel_size=(5, 5))
         self.conv1_pool = nn.MaxPool2d(kernel_size=(2, 2), stride=None, padding=0, dilation=1, return_indices=False, ceil_mode=False)
         self.conv1_relu = nn.ReLU()
-        self.conv1_dropout = nn.Dropout2d(p=0.1)
 
         self.conv2 = nn.Conv2d(10, 20, kernel_size=(5, 5))
         self.conv2_pool = nn.MaxPool2d(kernel_size=(2, 2), stride=None, padding=0, dilation=1, return_indices=False, ceil_mode=False)
         self.conv2_relu = nn.ReLU()
-        self.conv2_dropout = nn.Dropout2d(p=0.1)
+        self.conv2_dropout = nn.Dropout2d(p=0.2)
 
         self.fc1 = nn.Linear(320, 50)
         self.fc1_relu = nn.ReLU()
@@ -389,7 +388,7 @@ class MNISTNetDropout(AbstractESModel):
         self._initialize_weights()
 
     def forward(self, x):
-        x = self.conv1_dropout(self.conv1_relu(self.conv1_pool(self.conv1(x))))
+        x = self.conv1_relu(self.conv1_pool(self.conv1(x)))
         x = self.conv2_dropout(self.conv2_relu(self.conv2_pool(self.conv2(x))))
         x = x.view(-1, 320)
         x = self.fc1_dropout(self.fc1_relu(self.fc1(x)))
