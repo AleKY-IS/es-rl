@@ -25,22 +25,29 @@ def get_names_dict(model):
     return names
 
 
-def torch_summarize(model, input_size, return_meta=False):
-    """
-    Summarizes torch model by showing trainable parameters and weights.
+def summarize_model(model, input_size, return_meta=False):
+    """Summarizes torch model by showing trainable parameters and weights.
+
+    Parameters:
+    ----------
+    model : {nn.Module}
+        The model to summarize.
+    input_size : {tuple}
+        The dimensions of the model input not including batch size.
+    return_meta : {bool}, optional
+        Whether or not to return some additional meta data of the 
+        model compute from the summary (the default is False).
     
-    author: wassname
-    url: https://gist.github.com/wassname/0fb8f95e4272e6bdd27bd7df386716b7
-    license: MIT
+    Returns
+    -------
+    pd.DataFrame
+        The model summary as a Pandas data frame.
     
-    Modified from:
-    - https://github.com/pytorch/pytorch/issues/2001#issuecomment-313735757
-    - https://gist.github.com/wassname/0fb8f95e4272e6bdd27bd7df386716b7/
-    
-    Usage:
+    ---------
+    Example:
         import torchvision.models as models
         model = models.alexnet()
-        df = torch_summarize(model=model, input_size=(3, 224, 224))
+        df = summarize_model(model=model, input_size=(3, 224, 224))
         print(df)
         
                      name class_name        input_shape       output_shape  n_parameters
@@ -48,6 +55,46 @@ def torch_summarize(model, input_size, return_meta=False):
         2     features=>1       ReLU   (-1, 64, 55, 55)   (-1, 64, 55, 55)          0
         ...
     """
+    def get_settings(m):
+        c = m.__class__
+        s = {}
+        # Linear layers
+        if c is [nn.Linear, nn.Bilinear]:
+            s = '-'
+        # Convolutional layers
+        if c in [nn.Conv1d, nn.Conv2d, nn.Conv3d]:
+            s = {'stride': m.stride, 'padding': m.padding}
+        if c in [nn.ConvTranspose1d, nn.ConvTranspose2d, nn.ConvTranspose3d]:
+            s = {'stride': m.stride, 'padding': m.padding, 'output_padding': m.output_padding}
+        # Pooling layers
+        if c in [nn.MaxPool1d, nn.MaxPool2d, nn.MaxPool3d]:
+            s = {'kernel_size': m.kernel_size, 'stride': m.stride, 'padding': m.padding, 'dilation': m.dilation} #, 'ceil_mode'=False}
+        if c in [nn.MaxUnpool1d, nn.MaxUnpool2d, nn.MaxUnpool3d]:
+            s = {'kernel_size': m.kernel_size, 'stride': m.stride, 'padding': m.padding}
+        if c in [nn.AvgPool1d, nn.AvgPool2d, nn.AvgPool3d]:
+            s = {'kernel_size': m.kernel_size, 'stride': m.stride, 'padding': m.padding, 'count_include_pad': m.count_include_pad}
+        # Padding layers
+        if c in [nn.ReflectionPad1d, nn.ReflectionPad2d, nn.ReplicationPad1d, nn.ReplicationPad2d, nn.ReplicationPad3d, 
+                 nn.ZeroPad2d, nn.ConstantPad1d, nn.ConstantPad2d, nn.ConstantPad3d]:
+            s = {'padding': m.padding}
+            if c in [nn.ConstantPad1d, nn.ConstantPad2d, nn.ConstantPad3d]:
+                s['value'] = m.value
+        # Recurrent layers
+        if c in [nn.RNN, nn.LSTM, nn.GRU, nn.RNNCell, nn.LSTMCell, nn.GRUCell]:
+            s = {'input_size': m.input_size, 'hidden_size': m.hidden_size,
+                 'num_layers': m.num_layers, 'nonlinearity': m.nonlinearity,
+                 'dropout': m.dropout, 'bidirectional': m.bidirectional,
+                 'batch_first': m.batch_first}
+        # Dropout layers
+        if c in [nn.Dropout, nn.Dropout2d, nn.Dropout3d]:
+            s = {'p': m.p}
+        # Normalization layers
+        if c in [nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d]:
+            s = {'momentum': m.momentum, 'affine': m.affine}
+        # Activation functions
+        # Embedding layers
+        s = s if len(s) > 0 else '-'
+        return s
 
     def register_hook(module):
         # Define hook
@@ -72,6 +119,8 @@ def torch_summarize(model, input_size, return_meta=False):
             # Number of parameters in layers
             summary[m_key]['n_parameters'] = sum([torch.LongTensor(list(p.size())).prod() for p in module.parameters()])            
             summary[m_key]['n_trainable'] = sum([torch.LongTensor(list(p.size())).prod() for p in module.parameters() if p.requires_grad])
+            # Get special settings for layers
+            summary[m_key]['settings'] = get_settings(module)
 
         # Append 
         if not isinstance(module, nn.Sequential) and not isinstance(module, nn.ModuleList) and not (module == model):
