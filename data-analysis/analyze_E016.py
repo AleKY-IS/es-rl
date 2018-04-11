@@ -1,6 +1,8 @@
 import os
+from distutils.dir_util import copy_tree
 
 import IPython
+import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import scipy as sp
@@ -82,12 +84,15 @@ def create_plots(stats_list, keys_to_monitor, groups):
         else:
             print(f.format(i_key+1, n_keys), end='\r')
 
+
+matplotlib.rcParams.update({'font.size': 12})
 # Data directories
 i = 'E013-opti'
 keys_to_plot = {'return_unp', 'return_avg', 'accuracy_unp', 'accuracy_avg'}
 this_file_dir_local = os.path.dirname(os.path.abspath(__file__))
 package_root_this_file = fs.get_parent(this_file_dir_local, 'es-rl')
 d = os.path.join(package_root_this_file, 'experiments', 'checkpoints', i)
+dst_dir = '/home/jakob/Dropbox/Apps/ShareLaTeX/Master\'s Thesis/graphics/' + i + '-analysis'
 directories = [os.path.join(d, di) for di in os.listdir(d) if os.path.isdir(os.path.join(d, di)) and di != 'monitoring']
 analysis_dir = os.path.join(d, str(i) + '-analysis')
 if not os.path.exists(analysis_dir):
@@ -112,12 +117,4 @@ for d in directories:
 invert_signs(stats)
 create_plots(stats, keys_to_plot, groups)
 
-
-# sns.set(color_codes=True)
-# plt.figure(figsize=figsize)
-# legend = []
-# colors = plt.cm.rainbow(np.linspace(0, 1, len(np.unique(groups))))
-
-# ydatas = [s['']]
-
-# ax = sns.tsplot(value=ylabel, data=ydata_subsampled, time=x_subsampled, ci="sd", estimator=np.mean, color=c)
+copy_tree(analysis_dir, dst_dir)

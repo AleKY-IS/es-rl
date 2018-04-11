@@ -1,7 +1,9 @@
 import os
+from distutils.dir_util import copy_tree
 import warnings
 
 import IPython
+import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -72,14 +74,15 @@ def get_directories(experiment_id):
     directories = [os.path.join(d, di) for di in os.listdir(d) if os.path.isdir(os.path.join(d, di))]
     directories = [d for d in directories if 'monitoring' not in d and 'analysis' not in d]
     # Create result directory
-    result_dir = os.path.join(d, str(experiment_id) + '-analysis')
+    dst_dir = '/home/jakob/Dropbox/Apps/ShareLaTeX/Master\'s Thesis/graphics/' + experiment_id + '-analysis'
+    result_dir = os.path.join(d, experiment_id + '-analysis')
     if not os.path.exists(result_dir):
         os.mkdir(result_dir)
-    return directories, result_dir
+    return directories, result_dir, dst_dir
 
 
 def analyze(experiment_id, optimizer, keys_to_plot):
-    directories, result_dir = get_directories(experiment_id)
+    directories, result_dir, dst_dir = get_directories(experiment_id)
     if len(directories) == 0:
         print('No results for {}'.format(experiment_id))
         return
@@ -100,11 +103,15 @@ def analyze(experiment_id, optimizer, keys_to_plot):
     # Plot
     invert_signs(stats)
     create_plots(stats, keys_to_plot, groups, result_dir)
+    copy_tree(result_dir, dst_dir)
+    
 
 
 if __name__ == '__main__':
     # Ignore warnings from matplotlib
     warnings.filterwarnings("ignore", module="matplotlib")
+    # Font setting
+    matplotlib.rcParams.update({'font.size': 12})
     # Experiment IDs
     experiment_ids = ['E019-AS', 'E022-AS']
     # Optimizer labels

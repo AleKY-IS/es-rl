@@ -1,7 +1,9 @@
 import os
+from distutils.dir_util import copy_tree
 import warnings
 
 import IPython
+import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -75,11 +77,12 @@ def get_directories(experiment_id):
     directories = [d for d in directories if 'monitoring' not in d and 'analysis' not in d]
     # Create result directory
     result_dir = os.path.join(d, str(experiment_id[:4]))
+    dst_dir = '/home/jakob/Dropbox/Apps/ShareLaTeX/Master\'s Thesis/graphics/' + experiment_id[:4]
     if not os.path.exists(result_dir + '-bn-analysis'):
-        os.mkdir(result_dir + '-bn-analysis')
+        os.mkdir(result_dir + '-bn-analysis'),
     if not os.path.exists(result_dir + '-init-analysis'):
         os.mkdir(result_dir + '-init-analysis')
-    return directories, result_dir
+    return directories, result_dir, dst_dir
 
 
 def load(experiment_id, optimizer):
@@ -111,6 +114,8 @@ def load(experiment_id, optimizer):
 if __name__ == '__main__':
     # Ignore warnings from matplotlib
     warnings.filterwarnings("ignore", module="matplotlib")
+    # Font setting
+    matplotlib.rcParams.update({'font.size': 12})
     # Experiment IDs
     experiment_ids = ['E017-bn-init', 'E020-bn-init']
     # Optimizer labels
@@ -121,7 +126,7 @@ if __name__ == '__main__':
     # Analyze
     for experiment_id, optimizer in zip(experiment_ids, optimizers):
         # Get directories
-        directories, result_dir = get_directories(experiment_id)
+        directories, result_dir, dst_dir = get_directories(experiment_id)
         if len(directories) == 0:
             print('No results for {}'.format(experiment_id))
             continue
@@ -134,6 +139,11 @@ if __name__ == '__main__':
         invert_signs(stats_bn)
         create_plots(stats_init, keys_to_plot, groups_init, result_dir + '-init-analysis', include_val=True)
         create_plots(stats_bn, keys_to_plot, groups_bn, result_dir + '-bn-analysis', include_val=True)
+    
+        copy_tree(result_dir + '-init-analysis', dst_dir + '-init-analysis')
+        copy_tree(result_dir + '-bn-analysis', dst_dir + '-bn-analysis')
+        
+
 
     # Analyze
     # keys_to_plot = {'return_unp', 'return_avg', 'return_val', 'accuracy_unp', 'accuracy_avg', 'accuracy_val'}

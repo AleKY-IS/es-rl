@@ -1,7 +1,9 @@
 import argparse
 import os
+from distutils.dir_util import copy_tree
 
 import IPython
+import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import scipy as sp
@@ -10,10 +12,10 @@ import pandas as pd
 import torch
 from context import utils
 from utils.misc import get_equal_dicts
-from data_analysis import load_stats, invert_signs
+from utils.data_analysis import load_stats, invert_signs
 
 
-"""Script for analyzing experiment E005
+"""Script for analyzing experiment E005 and E011
 
 This experiment examines the scaling of the parallel implementation by running 
 different numbers of perturbations on different numbers of CPUs.
@@ -27,19 +29,23 @@ Second run of jobs starts at job id 792529
 """
 
 ONLY_LOGARITHMICALLY_SPACED_WORKER_TIMES = False
+matplotlib.rcParams.update({'font.size': 12})
 
 parser = argparse.ArgumentParser(description='Monitorer')
 parser.add_argument('-d', type=str, default=None, metavar='--directory', help='The directory of checkpoints to monitor.')
 args = parser.parse_args()
 
+Eid = 'E011'
+
 if not args.d:
     # args.d = "/home/jakob/mnt/Documents/es-rl/experiments/checkpoints/E005"   # Linux HPC
     # args.d = "/home/jakob/Dropbox/es-rl/experiments/checkpoints/E005-sca"     # Linux
-    args.d = "/Users/Jakob/mnt/Documents/es-rl/experiments/checkpoints/E011-sca"  # Mac
+    # args.d = "/Users/Jakob/mnt/Documents/es-rl/experiments/checkpoints/E011-sca"  # Mac
     # args.d = "/home/jakob/mnt/Documents/es-rl/experiments/checkpoints/E011"   # Linux HPC
-    # args.d = "/home/jakob/Dropbox/es-rl/experiments/checkpoints/E011-sca"     # Linux 
+    args.d = "/home/jakob/Dropbox/es-rl/experiments/checkpoints/" + Eid + "-sca"     # Linux 
 
-save_dir = os.path.join(args.d, 'analysis')
+dst_dir = '/home/jakob/Dropbox/Apps/ShareLaTeX/Master\'s Thesis/graphics/' + Eid + '-sca-analysis'
+save_dir = os.path.join(args.d, Eid + '-sca-analysis')
 if not os.path.exists(save_dir):
     os.mkdir(save_dir)
 
@@ -53,11 +59,12 @@ perturbations = []
 for d in directories:
     try:
         s = torch.load(os.path.join(d, 'state-dict-algorithm.pkl'))
-        workers.append(s['workers'])
-        perturbations.append(s['perturbations'])
-        algorithm_states.append(s)
-        stats.append(load_stats(os.path.join(d, 'stats.csv')))
-        print(s['workers'], s['perturbations'])
+        if Eid == 'E011' or Eid == 'E005' and s['perturbations'] > 64:
+            perturbations.append(s['perturbations'])
+            workers.append(s['workers'])
+            algorithm_states.append(s)
+            stats.append(load_stats(os.path.join(d, 'stats.csv')))
+            print(s['workers'], s['perturbations'])
     except:
         print("None in: " + d)
     # for rmf in rm_filenames:
@@ -200,7 +207,7 @@ plt.ylabel('Average time per iteration [s]')
 box = ax.get_position()
 ax.set_position([box.x0, box.y0, box.width * 0.8, box.height])
 ax.legend(legend, title='Perturbations', loc='center left', bbox_to_anchor=(1, 0.5))
-plt.savefig(os.path.join(save_dir,'E005-scaling-01.pdf'), bbox_inches='tight')
+plt.savefig(os.path.join(save_dir, Eid + '-scaling-01.pdf'), bbox_inches='tight')
 
 # Figure 2: Average time per iteration vs number of workers, logarithmic y and x
 fig, ax = plt.subplots()
@@ -219,7 +226,7 @@ plt.xlabel('Number of workers')
 plt.ylabel('Average time per iteration [s]')
 ax.set_yscale('log')
 ax.set_xscale('log', basex=2)
-plt.savefig(os.path.join(save_dir,'E005-scaling-02.pdf'), bbox_inches='tight')
+plt.savefig(os.path.join(save_dir, Eid + '-scaling-02.pdf'), bbox_inches='tight')
 
 # Figure 3: Average time per iteration vs number of workers, logarithmic y and x, smoothed interpolation
 fig, ax = plt.subplots()
@@ -245,7 +252,7 @@ plt.ylabel('Time per iteration [s]')
 # ax.legend(legend)
 ax.set_yscale('log')
 ax.set_xscale('log', basex=2)
-plt.savefig(os.path.join(save_dir,'E005-scaling-03.pdf'), bbox_inches='tight')
+plt.savefig(os.path.join(save_dir, Eid + '-scaling-03.pdf'), bbox_inches='tight')
 
 # Figure 4: Amdahl's law test
 fig, ax = plt.subplots()
@@ -255,12 +262,12 @@ for i_pert in sorted(np.unique(perturbations), reverse=False):
         continue
     legend.append(str(i_pert))
     ax.errorbar(workers_SP[i_pert], SP[i_pert], yerr=SP_std[i_pert], fmt='-o')
-ax.errorbar(workers_SP[2], workers_SP[2])
+ax.errorbar(workers_SP[np.unique(perturbations)[0]], workers_SP[np.unique(perturbations)[0]])
 legend.append("Ideal")
 plt.xlabel('Number of workers')
 plt.ylabel('Speed-up factor')
 ax.legend(legend, title='Perturbations', loc='upper left', ncol=2, columnspacing=0.5)
-plt.savefig(os.path.join(save_dir,'E005-scaling-04.pdf'), bbox_inches='tight')
+plt.savefig(os.path.join(save_dir, Eid + '-scaling-04.pdf'), bbox_inches='tight')
 
 # Figure 5: Amdahl's law test
 fig, ax = plt.subplots()
@@ -284,7 +291,7 @@ ax.set_xscale('log', basex=2)
 plt.xlabel('Number of perturbations')
 plt.ylabel('Speed-up factor')
 plt.legend(legend, title='CPUs')
-plt.savefig(os.path.join(save_dir,'E005-scaling-05.pdf'), bbox_inches='tight')
+plt.savefig(os.path.join(save_dir, Eid + '-scaling-05.pdf'), bbox_inches='tight')
 
 # Figure 6: ...
 fig, ax = plt.subplots()
@@ -300,7 +307,7 @@ plt.xlabel('Number of workers')
 plt.ylabel('Average parallel fraction')
 ax.legend(legend)
 # ax.set_yscale('log')
-plt.savefig(os.path.join(save_dir,'E005-scaling-06.pdf'), bbox_inches='tight')
+plt.savefig(os.path.join(save_dir, Eid + '-scaling-06.pdf'), bbox_inches='tight')
 
 # Figure 7: Amdahl's law test: Parallel fraction as function of perturbations
 fig, ax = plt.subplots()
@@ -323,6 +330,6 @@ plt.ylabel('Average parallel fraction')
 ax.legend(legend, title='CPUs')
 ax.set_xscale('log', basex=2)
 # ax.set_yscale('log', basey=10)
-plt.savefig(os.path.join(save_dir,'E005-scaling-07.pdf'), bbox_inches='tight')
+plt.savefig(os.path.join(save_dir, Eid + '-scaling-07.pdf'), bbox_inches='tight')
 
-IPython.embed()
+copy_tree(save_dir, dst_dir)
