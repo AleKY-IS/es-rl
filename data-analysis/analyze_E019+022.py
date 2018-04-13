@@ -91,7 +91,7 @@ def analyze(experiment_id, optimizer, keys_to_plot):
     groups = np.array([])
     for d in directories:
         try:
-            s = torch.load(os.path.join(d, 'state-dict-best-algorithm.pkl'))
+            s = torch.load(os.path.join(d, 'state-dict-algorithm.pkl'))
             if s['no_antithetic']:
                 groups = np.append(groups, 'No antithetic (' + str(s['perturbations']) + ' perturbations)' + optimizer)
             else:

@@ -54,9 +54,9 @@ def create_plots(stats_list, keys_to_plot, groups, result_dir, include_val=True)
         # Plot
         plot.timeseries_mean_grouped(list_of_genera, list_of_series, groups, xlabel='generations', ylabel=k)
         if 'return' in k:
-            plt.gca().set_ylim(0, 1)
+            plt.gca().set_ylim(0, 2)
         elif 'accuracy' in k:
-            plt.gca().set_ylim(0.6, 1)
+            plt.gca().set_ylim(0.3, 1)
         plt.savefig(os.path.join(result_dir, k + '-all-series-mean-sd' + '.pdf'), bbox_inches='tight')
         plt.close()
         # Progress
@@ -91,19 +91,24 @@ def analyze(experiment_id, optimizer, keys_to_plot):
     groups = np.array([])
     for d in directories:
         try:
-            s = torch.load(os.path.join(d, 'state-dict-algorithm.pkl'))
-            if s['safe_mutation'] == 'SUM':
-                groups = np.append(groups, 'SM-G-SUM' + optimizer)
-            else:
-                groups = np.append(groups, 'No SM' + optimizer)
             st = pd.read_csv(os.path.join(d, 'stats.csv'))
-            stats.append(st)
+            with open(os.path.join(d, 'init.log'), 'r') as f:
+                s = f.read()
+            if 'MNISTNetDropout' in s or 'MNISTNetNoBN' in s:
+                if 'MNISTNetDropout' in s:
+                    groups = np.append(groups, 'Dropout' + optimizer) # Has BN
+                elif 'MNISTNetNoBN' in s:
+                    groups = np.append(groups, 'Neither' + optimizer) # Has Xavier Glorot
+                # elif 'MNISTNet' in s:
+                #     groups = np.append(groups, 'Batchnorm') # Has Xavier Glorot
+                stats.append(st)
         except:
             print("None in: " + d)
     # Plot
     invert_signs(stats)
     create_plots(stats, keys_to_plot, groups, result_dir)
     copy_tree(result_dir, dst_dir)
+    
 
 
 if __name__ == '__main__':
@@ -112,13 +117,12 @@ if __name__ == '__main__':
     # Font setting
     matplotlib.rcParams.update({'font.size': 12})
     # Experiment IDs
-    experiment_ids = ['E018-SM', 'E021-SM']
+    experiment_ids = ['E023-DO-Adam', 'E024-DO-SGD']
     # Optimizer labels
     # optimizers = [', SGD', ', ADAM']
     optimizers = ['', '']
     # Keys to analyze
-    keys_to_plot = {'return_unp', 'return_avg', 'accuracy_unp', 'accuracy_avg', 'sigma'}
+    keys_to_plot = ['return_unp', 'return_avg', 'accuracy_unp', 'accuracy_avg', 'sigma']
     # Analyze
     for experiment_id, optimizer in zip(experiment_ids, optimizers):
         analyze(experiment_id, optimizer, keys_to_plot)
-

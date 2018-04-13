@@ -17,7 +17,7 @@ from utils.data_analysis import invert_signs, load_stats
 from utils.misc import get_equal_dicts, length_of_longest
 
 
-def create_plots(stats_list, keys_to_plot, groups, result_dir, include_val=True):
+def create_plots(stats_list, keys_to_plot, x_key, groups, result_dir, include_val=True):
     n_keys = len(keys_to_plot)
     n_chars = len(str(n_keys))
     f = '    {:' + str(n_chars) + 'd}/{:' + str(n_chars) + 'd} monitored keys plotted'
@@ -26,20 +26,21 @@ def create_plots(stats_list, keys_to_plot, groups, result_dir, include_val=True)
         # Get data and subset only those series that are done (or the one that is the longest)
         groups = groups_org.copy()
         list_of_series = [s[k].tolist() for s in stats_list if k in s]
-        list_of_genera = [range(len(s)) for s in stats_list if k in s]  
+        list_of_xs = [s[x_key].tolist() for s in stats_list if k in s]  # [range(len(s)) for s in stats_list if k in s]  
         l = length_of_longest(list_of_series)
         indices = [i for i, series in enumerate(list_of_series) if len(series) == l]
         groups = groups[indices]
         list_of_series = [list_of_series[i] for i in indices]
-        list_of_genera = [list_of_genera[i] for i in indices]
+        list_of_xs = [list_of_xs[i] for i in indices]
 
         # Validation series
         if include_val:
             val_k = k[:-4] + '_val'
             list_of_series_val = [s[val_k].tolist() for i, s in enumerate(stats_list) if val_k in s and i in indices]
         if include_val and not len(list_of_series_val) == 0:
-            list_of_genera_val = [np.where(~np.isnan(l))[0].tolist() for l in list_of_series_val]
-            list_of_genera.extend(list_of_genera_val)
+            # list_of_xs_val = [np.where(~np.isnan(l))[0].tolist() for l_s in list_of_series_val]
+            list_of_xs_val = [np.array(l_x)[~np.isnan(l_s)].tolist() for l_x, l_s in zip(list_of_xs, list_of_series_val)]
+            list_of_xs.extend(list_of_xs_val)
             list_of_series_val = [np.array(l) for l in list_of_series_val]
             list_of_series_val = [l[~np.isnan(l)].tolist() for l in list_of_series_val]
             list_of_series.extend(list_of_series_val)
@@ -47,17 +48,20 @@ def create_plots(stats_list, keys_to_plot, groups, result_dir, include_val=True)
             groups = np.append(groups, groups_val)
 
         # Sort
-        list_of_genera = [x for _,x in sorted(zip(groups.tolist(), list_of_genera))]
+        list_of_xs = [x for _,x in sorted(zip(groups.tolist(), list_of_xs))]
         list_of_series = [x for _,x in sorted(zip(groups.tolist(), list_of_series))]
         groups.sort()
 
         # Plot
-        plot.timeseries_mean_grouped(list_of_genera, list_of_series, groups, xlabel='generations', ylabel=k)
+        plot.timeseries_mean_grouped(list_of_xs, list_of_series, groups, xlabel=x_key, ylabel=k)
         if 'return' in k:
             plt.gca().set_ylim(0, 1)
         elif 'accuracy' in k:
             plt.gca().set_ylim(0.6, 1)
-        plt.savefig(os.path.join(result_dir, k + '-all-series-mean-sd' + '.pdf'), bbox_inches='tight')
+        if x_key == 'generations':
+            plt.savefig(os.path.join(result_dir, k + '-all-series-mean-sd' + '.pdf'), bbox_inches='tight')
+        else:
+            plt.savefig(os.path.join(result_dir, x_key + '-' + k + '-all-series-mean-sd' + '.pdf'), bbox_inches='tight')
         plt.close()
         # Progress
         if i_key + 1 == n_keys:
@@ -92,18 +96,19 @@ def analyze(experiment_id, optimizer, keys_to_plot):
     for d in directories:
         try:
             s = torch.load(os.path.join(d, 'state-dict-algorithm.pkl'))
-            if s['safe_mutation'] == 'SUM':
-                groups = np.append(groups, 'SM-G-SUM' + optimizer)
-            else:
-                groups = np.append(groups, 'No SM' + optimizer)
-            st = pd.read_csv(os.path.join(d, 'stats.csv'))
-            stats.append(st)
+            fr = s['forced_refresh']
+            if fr == 0.01 or fr == 1.0:
+                groups = np.append(groups, r'$\alpha={}$'.format(fr))
+                st = pd.read_csv(os.path.join(d, 'stats.csv'))
+                stats.append(st)
         except:
             print("None in: " + d)
     # Plot
     invert_signs(stats)
-    create_plots(stats, keys_to_plot, groups, result_dir)
+    create_plots(stats, keys_to_plot, 'generations', groups, result_dir, include_val=True)
+    create_plots(stats, keys_to_plot, 'walltimes', groups, result_dir, include_val=True)
     copy_tree(result_dir, dst_dir)
+    
 
 
 if __name__ == '__main__':
@@ -112,13 +117,12 @@ if __name__ == '__main__':
     # Font setting
     matplotlib.rcParams.update({'font.size': 12})
     # Experiment IDs
-    experiment_ids = ['E018-SM', 'E021-SM']
+    experiment_ids = ['E025-IS', 'E026-IS']
     # Optimizer labels
     # optimizers = [', SGD', ', ADAM']
     optimizers = ['', '']
     # Keys to analyze
-    keys_to_plot = {'return_unp', 'return_avg', 'accuracy_unp', 'accuracy_avg', 'sigma'}
+    keys_to_plot = ['return_unp', 'return_avg', 'accuracy_unp', 'accuracy_avg', 'n_reused']
     # Analyze
     for experiment_id, optimizer in zip(experiment_ids, optimizers):
         analyze(experiment_id, optimizer, keys_to_plot)
-
