@@ -60,6 +60,8 @@ def parse_inputs():
     parser.add_argument('--sigma', type=float, default=0.05, metavar='SD', help='Initial noise standard deviation')
     parser.add_argument('--optimize-sigma', type=str, default='None', choices=sigma_choices, metavar='OS', help='Which type of covariance matrix parameterization to use')
     parser.add_argument('--no-antithetic', action='store_true', help='Boolean to not to use antithetic sampling')
+    parser.add_argument('--forced-refresh', type=float, default=0.01, help='Forced refresh rate for importance sampling')
+    parser.add_argument('--adaptation-sampling', action='store_true', default=False, help='Whether or not to use adaptive sampling for updating learning rate')
     parser.add_argument('--safe-mutation', type=str, default='SUM', choices=sm_choices, help='String denoting the type of safe mutations to use')
     parser.add_argument('--batch-size', type=int, default=1000, metavar='BS', help='Batch size agent evaluation (max episode steps for RL setting rollouts)')
     parser.add_argument('--max-generations', type=int, default=7500, metavar='MG', help='Maximum number of generations')
