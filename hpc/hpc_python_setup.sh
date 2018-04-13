@@ -43,7 +43,7 @@ then
     pip3 install -U gym[box2d]
     pip3 install -U gym[atari]
     pip3 install -U universe
-    pip3 install -U http://download.pytorch.org/whl/cu90/torch-0.3.0.post4-cp36-cp36m-linux_x86_64.whl 
+    pip3 install -U http://download.pytorch.org/whl/cu90/torch-0.3.0.post4-cp36-cp36m-linux_x86_64.whl  # http://download.pytorch.org/whl/cu90/torch-0.3.1.post4-cp36-cp36m-linux_x86_64.whl
     pip3 install -U torchvision
 fi
 source ~/ml/bin/activate
