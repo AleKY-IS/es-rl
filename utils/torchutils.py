@@ -126,8 +126,10 @@ def summarize_model(model, input_size, return_meta=False):
         if not isinstance(module, nn.Sequential) and not isinstance(module, nn.ModuleList) and not (module == model):
             hooks.append(module.register_forward_hook(hook))
 
-    # Put model in evaluation mode (required for e.g. batchnorm layers)
-    model.eval()
+    # Put model in evaluation mode (required for some modules {BN, DO, etc.})
+    was_training = model.training
+    if model.training:
+        model.eval()
     # Names are stored in parent and path+name is unique not the name
     names = get_names_dict(model)
     # Check if there are multiple inputs to the network
@@ -150,6 +152,9 @@ def summarize_model(model, input_size, return_meta=False):
     # return it in the state it was given.
     for h in hooks:
         h.remove()
+    # If the model was in training mode, put it back into training mode
+    if was_training:
+        model.train()
     # Make dataframe
     df_summary = pd.DataFrame.from_dict(summary, orient='index')
     # Create additional info
@@ -292,5 +297,5 @@ if __name__ == '__main__':
     # Test on alexnet
     import torchvision.models as models
     model = models.alexnet()
-    df = torch_summarize(input_size=(3, 224, 224), model=model)
+    df = summarize_model(input_size=(3, 224, 224), model=model)
     print(df)
