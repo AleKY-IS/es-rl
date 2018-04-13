@@ -18,6 +18,7 @@ import IPython
 import numpy as np
 import pandas as pd
 import torch
+import torch.functional as F
 import torch.multiprocessing as mp
 from torch.autograd import Variable
 
@@ -26,16 +27,6 @@ from utils.misc import get_inputs_from_dict, to_numeric
 from utils.plotting import plot_stats
 from utils.progress import PoolProgress
 from utils.torchutils import summarize_model
-
-
-def count_model_parameters(model, only_trainable=True):
-    """ Count the number of parameters in a pytorch model
-    """
-    if only_trainable:
-        n = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    else:
-        n = sum(p.numel() for p in model.parameters())
-    return n
 
 
 class Algorithm(object):
@@ -59,7 +50,7 @@ class Algorithm(object):
 
     __metaclass__ = ABCMeta
 
-    def __init__(self, model, env, optimizer, lr_scheduler, eval_fun, perturbations, batch_size, max_generations, safe_mutation, no_antithetic, val_env=None, val_every=25, workers=mp.cpu_count(), chkpt_dir=None, chkpt_int=600, track_parallel=False, cuda=False, silent=False):
+    def __init__(self, model, env, optimizer, lr_scheduler, eval_fun, perturbations, batch_size, max_generations, safe_mutation, no_antithetic, adaptation_sampling=True, forced_refresh=0.01, val_env=None, val_every=25, workers=mp.cpu_count(), chkpt_dir=None, chkpt_int=600, track_parallel=False, cuda=False, silent=False):
         self.algorithm = self.__class__.__name__
         # Algorithmic attributes
         self.model = model
@@ -70,7 +61,9 @@ class Algorithm(object):
         self.eval_fun = eval_fun
         self.safe_mutation = safe_mutation
         self.no_antithetic = no_antithetic
+        self.adaptation_sampling = adaptation_sampling
         self.perturbations = perturbations
+        self.forced_refresh = forced_refresh  # Forced resampling rate for importance mixing
         self.batch_size = batch_size
         self.max_generations = max_generations
         self.val_every = val_every
@@ -104,7 +97,7 @@ class Algorithm(object):
         # Attributes to exclude from the state dictionary
         self.exclude_from_state_dict = {'env', 'optimizer', 'lr_scheduler', 'model', 'stats', 'sens_inputs'}
         # Initialize dict for saving statistics
-        self._base_stat_keys = {'generations', 'walltimes', 'workertimes', 'unp_rank'}
+        self._base_stat_keys = {'generations', 'walltimes', 'workertimes', 'unp_rank', 'n_reused', 'n_rejected'}
         self.stats = {key: [] for key in self._base_stat_keys}
         self._training_start_time = None
 
@@ -181,11 +174,14 @@ class Algorithm(object):
 
     @staticmethod
     def fitness_normalization(returns, unperturbed_return):
-        returns = returns - unperturbed_return
+        returns -= unperturbed_return
         if not np.isnan(returns.std()):
-            returns = returns/returns.std()
+            returns /= returns.std()
         else:
             assert (returns == returns).all()
+        IPython.embed()
+        returns /= returns.sum()
+        assert returns.sum() == 1.0
         return returns
     
     @staticmethod
@@ -198,7 +194,9 @@ class Algorithm(object):
         """
         if type(size) in [tuple, list]:
             size = torch.Size(size)
-        elif type(size) in [torch.Size, int]:
+        elif type(size) is int:
+            size = torch.Size([size])
+        elif type(size) is torch.Size:
             pass
         else:
             raise TypeError("Input `size` must be of type `int`, `list`, `tuple` or `torch.Size` but was `{}`".format(type(size).__name__))
@@ -239,39 +237,40 @@ class Algorithm(object):
             eps *= std
         return eps
 
-
     def _vec2modelrepr(self, vec, only_trainable=True, yield_generator=True):
         """Converts a 1xN Tensor into a list of Tensors, each matching the 
         dimension of the corresponding parameter in the model.
         """
-        print("_vec2modelrepr")
-        IPython.embed()
+        # print("_vec2modelrepr")
         assert self.model.count_parameters(only_trainable=True) == vec.numel()
-        if yield_generator:
-            i = 0
-            for p in self.model.parameters():
-                j = i + p.numel()
-                yield vec[i:j]
-                i = j
-        else:
-            pars = []
-            i = 0
-            for p in self.model.parameters():
-                j = i + p.numel()
-                pars.append(vec[i:j])
-                i = j
-            return pars
+        # if yield_generator:
+        #     i = 0
+        #     for p in self.model.parameters():
+        #         j = i + p.numel()
+        #         yield vec[i:j].view(p.size())
+        #         i = j
+        # else:
+        pars = []
+        i = 0
+        for p in self.model.parameters():
+            j = i + p.numel()
+            pars.append(vec[i:j].view(p.size()))
+            i = j
+        return pars
 
     def _modelrepr2vec(self, modelrepr, only_trainable=True):
         """Converts a list of Tensors to a single 1xN Tensor.
         """
-        vec = torch.zeros(self.model.count_parameters(only_trainable=True))
-        i = 0
-        for p in modelrepr:
-            j = i + p.numel()
-            vec[i:j] = p.data.view(-1) if type(p) is Variable else p.view(-1)
-            i = j
-        return vec
+        if all([p is None for p in modelrepr]):
+            return torch.ones(self.model.count_parameters(only_trainable=True))
+        else:
+            vec = torch.zeros(self.model.count_parameters(only_trainable=True))
+            i = 0
+            for p in modelrepr:
+                j = i + p.numel()
+                vec[i:j] = p.data.view(-1) if type(p) is Variable else p.view(-1)
+                i = j
+            return vec
 
     def compute_sensitivities(self, inputs=None, do_normalize=True, do_numerical=True):
         """Computes the output-weight sensitivities of the model.
@@ -332,7 +331,8 @@ class Algorithm(object):
             for pid in range(len(sensitivities)):
                 sensitivities[pid][np.isinf(sensitivities[pid])] = 1
                 overflow = overflow or np.isinf(sensitivities[pid]).any()
-            if overflow: print('| Encountered numerical overflow in sensitivities', end='')
+            if overflow:
+                print('| Encountered numerical overflow in sensitivities', end='')
         # Normalize
         if do_normalize:
             # Find maximal sensitivity across all layers
@@ -408,6 +408,174 @@ class Algorithm(object):
     def _compute_sensitivities_r(self, outputs, t):
         pass
 
+    def generate_sample(self, seed, mean, sigma):
+        """Separable case
+        """
+        sign = np.sign(seed)
+        torch.manual_seed(abs(seed))
+        torch.cuda.manual_seed(abs(seed))
+        sample = []
+        for p, w, s, sens in zip(self.model.parameters(), mean, sigma, self.sensitivities):
+            eps = int(sign) * self.get_perturbation(p.size(), sensitivities=sens, cuda=self.cuda)
+            sample.append(w + s * eps)
+        return self._modelrepr2vec(sample)
+    
+    @staticmethod
+    def diagonal_gaussian_pdf(sample, mean, sigma):
+        """Separable case. PDF is product of univariate Gaussian PDFs
+        """
+        log_p = - 0.5 * sample.numel() * np.log(2*np.pi) - 0.5 * sigma.pow(2).prod() - 0.5 * sigma.pow(-2) * (sample - mean) @ (sample - mean)
+        # log_p = 0
+        # for sample_i, m, s in zip(sample, mean, sigma):
+        #     n = torch.distributions.Normal(m, s)
+        #     log_p += n.log_prob(sample_i)
+        return log_p
+
+    def importance_mixing(self, seeds, current_pdf_pars, previous_pdf_pars):
+        # Get input
+        if self.__class__ in [ES, NES, sNES, sES]:
+            prev_mean, prev_sigma = previous_pdf_pars
+            curr_mean, curr_sigma = current_pdf_pars
+            prev_mean = self._modelrepr2vec(prev_mean)
+            curr_mean = self._modelrepr2vec(curr_mean)
+            if self.optimize_sigma in [None, 'single']:
+                n_weights = self.model.count_parameters()
+                prev_sigma = prev_sigma.clone().repeat(n_weights)  # TODO These .clone()s should be possible to remove in pytorch 3.1
+                curr_sigma = curr_sigma.clone().repeat(n_weights)
+            elif self.optimize_sigma == 'per-layer':
+                raise NotImplementedError()
+            elif self.optimize_sigma == 'per-weight':
+                pass
+
+        # Rejection sample on previous population keeping some samples for reuse
+        # TODO: If antithetic maybe loop only over positives and always accept/reject pairwise?
+        reused_ids = []
+        if self.forced_refresh != 1.0:
+            for i in range(len(seeds)):
+                # Generate sample
+                prev_mean, prev_sigma = self._vec2modelrepr(prev_mean), self._vec2modelrepr(prev_sigma)
+                sample = self.generate_sample(seeds[i], prev_mean, prev_sigma)
+                prev_mean, prev_sigma = self._modelrepr2vec(prev_mean), self._modelrepr2vec(prev_sigma)
+                # Reject/accept old sample into new distribution using importance weights
+                importance_weight = np.exp(self.diagonal_gaussian_pdf(sample, curr_mean, curr_sigma) - self.diagonal_gaussian_pdf(sample, prev_mean, prev_sigma))
+                p_accept = (1 - self.forced_refresh) * importance_weight
+                r = np.random.uniform(0, 1)
+                if r < p_accept:
+                    reused_ids.append(i)
+                # Never use only old samples
+                if self.perturbations - len(reused_ids) <= max(1, self.perturbations * self.forced_refresh):
+                    break
+        reused_seeds = seeds[reused_ids]
+
+        # Reverse rejection sample until the wanted total population size is reached
+        new_seeds = torch.LongTensor([])
+        n_rejected = 0
+        while len(reused_seeds) + len(new_seeds) < self.perturbations:
+            seed = torch.LongTensor(1).random_()
+            curr_mean, curr_sigma = self._vec2modelrepr(curr_mean), self._vec2modelrepr(curr_sigma)
+            sample = self.generate_sample(seed[0], curr_mean, curr_sigma)
+            curr_mean, curr_sigma = self._modelrepr2vec(curr_mean), self._modelrepr2vec(curr_sigma)
+            importance_weight = np.exp(self.diagonal_gaussian_pdf(sample, prev_mean, prev_sigma) - self.diagonal_gaussian_pdf(sample, curr_mean, curr_sigma))
+            p_accept = 1 - importance_weight
+            r = np.random.uniform(0, 1)
+            if r < self.forced_refresh or r < p_accept:
+                if not self.no_antithetic: seed = torch.cat([seed, -seed])
+                new_seeds = torch.cat([new_seeds, seed])
+            else:
+                n_rejected += 1
+        print(" | " + str(len(reused_seeds)), end='')
+        return new_seeds, reused_seeds, reused_ids, n_rejected
+
+    def adaptation_sampling_learning_rate_update(self, returns, seeds, current_pdf_pars, update_ids):
+        def revert_optimization_direction(original_optimizer_state):
+            for p in self.model.parameters():
+                p.grad.data *= -1
+                
+        # Get input
+        if self.__class__ in [ES, NES, sNES, sES]:
+            curr_mean, curr_sigma = current_pdf_pars
+            curr_mean = self._modelrepr2vec(curr_mean)
+            if self.optimize_sigma in [None, 'single']:
+                n_weights = self.model.count_parameters()
+                curr_sigma = curr_sigma.repeat(n_weights)
+            elif self.optimize_sigma == 'per-layer':
+                raise NotImplementedError()
+            elif self.optimize_sigma == 'per-weight':
+                pass
+
+        # Potential better weights (larger step)
+        original_optimizer_state = copy.deepcopy(self.optimizer.state_dict())
+        new_optimizer_state = copy.deepcopy(self.optimizer.state_dict())
+        IPython.embed()
+        if update_ids == 0:
+            # Get potential new mean
+            potn_mean = []
+            new_optimizer_state['param_groups'][0]['lr'] *= 1.1
+            self.optimizer.load_state_dict(new_optimizer_state)
+            # for p in self.model.parameters():
+            #     a = 1
+            # print(p.data)
+            self.optimizer.step()
+            # for p in self.model.parameters():
+            #     a = 1
+            # print(p.data)
+            for p in self.model.parameters():
+                potn_mean.append(p.clone())
+            self.optimizer.load_state_dict(new_optimizer_state)
+            revert_optimization_direction(new_optimizer_state)
+            self.optimizer.step()
+            self.optimizer.load_state_dict(original_optimizer_state)
+            revert_optimization_direction(original_optimizer_state)
+            # for p in self.model.parameters():
+            #     a = 1
+            # print(p.data)
+            # Compute importance weights
+            importance_weights = []
+            potn_mean = self._modelrepr2vec(potn_mean)
+            for i in range(len(seeds)):
+                # Generate sample
+                potn_mean, curr_sigma = self._vec2modelrepr(potn_mean), self._vec2modelrepr(curr_sigma)
+                sample = self.generate_sample(seeds[i], potn_mean, curr_sigma)
+                potn_mean, curr_sigma = self._modelrepr2vec(potn_mean), self._modelrepr2vec(curr_sigma)
+                # Compute importance weight
+                importance_weights.append(np.exp(self.diagonal_gaussian_pdf(sample, potn_mean, curr_sigma) - self.diagonal_gaussian_pdf(sample, curr_mean, curr_sigma)))
+            IPython.embed()
+            
+            importance_weights = np.array(importance_weights)
+            unit_weights = np.array([1] * len(importance_weights))
+            So = self.fitness_shaping(returns)
+            Sw = self.fitness_shaping(np.array(importance_weights) * returns)
+            cp = 0.1
+            lr = original_optimizer_state['param_groups'][0]['lr']
+            lr_init = original_optimizer_state['param_groups'][0]['initial_lr']
+            from scipy.stats import mannwhitneyu as mwt
+            mwt(So, Sw)
+            # TODO Check implementation of WMWT gives same results as unweighted for unit weights
+            # TODO Check if unweighted MWT on So and Sw yields reasonable results
+            if self.Mann_Whitney_test(So, So, weights=(unit_weights, importance_weights)) < rho:
+                # Decay learning rate
+                original_optimizer_state['param_groups'][0]['lr'] = (1 - cp) * lr + cp * lr_init
+            else:
+                # Increase learning rate
+                original_optimizer_state['param_groups'][0]['lr'] *= 1.1
+            self.optimizer.load_state_dict(original_optimizer_state)
+    
+    @staticmethod
+    def Mann_Whitney_test(S1, S2, weights=None):
+        if weights is None:
+            weights = (np.array([1] * len(S1)), np.array([1] * len(S2)))
+        w1 = weights[0]
+        w2 = weights[1]
+        IPython.embed()
+        ids_eq = S1 == S2
+        ids_larger = S1 > S2
+        U = w1[ids_larger].dot(w2[ids_larger]) + 0.5 * w1[ids_eq].dot(w2[ids_eq])
+        m1 = w1.sum()
+        m2 = w2.sum()
+        mu = 0.5 * m1 * m2
+        s = np.sqrt(m1 * m2 * (m1 + m2 + 1) / 12)
+        return (U - mu) / s
+
     def print_init(self):
         """Print the initial message when training is started
         """
@@ -424,13 +592,12 @@ class Algorithm(object):
         s += "Available CPUs        {:s}\n".format(str(mp.cpu_count()))
         s += "\n==================== MODEL ====================\n"
         s += "Summary of " + self.model.__class__.__name__ + "\n\n"
-        self.model.eval()
-        model_summary = summarize_model(input_size=self.sens_inputs[0].size(), model=self.model)
-        s += model_summary.to_string() + "\n\n"
-        s += "Parameters: {:d}".format(model_summary.n_parameters.sum()) + "\n"
-        s += "Trainable parameters: {:d}".format(model_summary.n_trainable.sum()) + "\n"
-        s += "Layers: {:d}".format(model_summary.shape[0]) + "\n"
-        s += "Trainable layers: {:d}".format((model_summary.n_trainable != 0).sum()) + "\n"
+        pd.set_option('display.max_colwidth', -1)
+        s += self.model.summary.to_string() + "\n\n"
+        s += "Parameters: {:d}".format(self.model.summary.n_parameters.sum()) + "\n"
+        s += "Trainable parameters: {:d}".format(self.model.summary.n_trainable.sum()) + "\n"
+        s += "Layers: {:d}".format(self.model.summary.shape[0]) + "\n"
+        s += "Trainable layers: {:d}".format((self.model.summary.n_trainable != 0).sum()) + "\n"
         s += "\n================== OPTIMIZER ==================\n"
         s += str(type(self.optimizer)) + "\n"
         s += pprint.pformat(self.optimizer.state_dict()['param_groups']) + "\n"
@@ -445,6 +612,8 @@ class Algorithm(object):
         s += "Batch size            {:<5d}\n".format(self.batch_size)
         s += "Safe mutation         {:s}\n".format(safe_mutation)
         s += "Antithetic sampling   {:s}\n".format(str(not self.no_antithetic))
+        s += "Adaptation sampling   {:s}\n".format(str(self.adaptation_sampling))
+        s += "Forced refresh (IS)   {:f}\n".format(self.forced_refresh)
         s += "CUDA                  {:s}\n".format(str(self.cuda))
         s += "Workers               {:d}\n".format(self.workers)
         s += "Validation interval   {:d}\n".format(self.val_every)
@@ -548,7 +717,7 @@ class Algorithm(object):
 
                         # raise ValueError('An added optimized parameter must be stored in the state dict to enable loading, `{}` was not'.format(p['label']))
 
-    def _store_stats(self, workers_out, unperturbed_out, unperturbed_test_out, generation, rank, workers_time):
+    def _store_stats(self, workers_out, unperturbed_out, unperturbed_val_out, generation, rank, workers_time, n_reused, n_rejected):
         # Check existence of required keys. Create if not there.
         ks = filter(lambda k: k != 'seed', workers_out.keys())
         add_dict = {}
@@ -560,6 +729,8 @@ class Algorithm(object):
         self.stats['walltimes'].append(time.time() - self._training_start_time)
         self.stats['workertimes'].append(workers_time)
         self.stats['unp_rank'].append(rank)
+        self.stats['n_reused'].append(n_reused)
+        self.stats['n_rejected'].append(n_rejected)
         for i, lr in enumerate(self.lr_scheduler.get_lr()):
             self.stats['lr_' + str(i)].append(lr)
         for k, v in workers_out.items():
@@ -570,7 +741,7 @@ class Algorithm(object):
                 self.stats[k + '_var'].append(np.var(v))
                 self.stats[k + '_sum'].append(np.sum(v))
                 self.stats[k + '_unp'].append(unperturbed_out[k])
-                self.stats[k + '_val'].append(unperturbed_test_out[k])
+                self.stats[k + '_val'].append(unperturbed_val_out[k])
 
     def _dump_stats(self):
         # Store stats as csv file on drive such that self does not grow in size
@@ -688,9 +859,16 @@ class StochasticGradientEstimation(Algorithm):
         eval_kwargs_unp = {'max_episode_length': self.batch_size, 'collect_inputs': hasattr(self.env, 'env') * self.batch_size, 'chunksize': chunksize}
 
         if hasattr(self.env, 'env'):
-            # unperturbed_out = pool.apply(self.eval_fun, (self.model, self.env, 42), eval_kwargs_unp)
             unperturbed_out = self.eval_fun(self.model, self.env, 42, **eval_kwargs_unp)
             self.sens_inputs = torch.from_numpy(unperturbed_out['inputs'])
+
+        # Importance sampling initialization
+        current_weights = []
+        for p in self.model.parameters():
+            current_weights.append(p.data.clone())
+        current_sigma = self._beta2sigma(self.beta.data)
+        reused_return = np.array([]).astype('float32')
+        reused_seeds = torch.LongTensor()
 
         # Start training loop
         for n_generation in range(start_generation, self.max_generations):
@@ -698,10 +876,21 @@ class StochasticGradientEstimation(Algorithm):
             self.compute_sensitivities()
 
             # Generate random seeds
-            seeds = torch.LongTensor(int(self.perturbations/((not self.no_antithetic) + 1))).random_()
-            if not self.no_antithetic: seeds = torch.cat([seeds, -seeds])
-            assert len(seeds) == self.perturbations, 'Number of created seeds is not equal to wanted perturbations'
-            
+            if 'seeds' in locals() and self.forced_refresh < 1.0: # False:  #
+                # Importance mixing
+                if 'reused_ids' in locals():
+                    rids = list(reused_ids)
+                seeds, reused_seeds, reused_ids, n_rejected = self.importance_mixing(seeds, (current_weights, current_sigma), (previous_weights, previous_sigma))
+                reused_return = workers_out['return'][reused_ids]
+                if 'rids' in locals():
+                    print('| 2RU ' + str(np.sum(np.array(rids) == np.array(reused_ids))), end='')
+            else:
+                # Regular sampling the first time
+                n_rejected = 0
+                seeds = torch.LongTensor(int(self.perturbations/((not self.no_antithetic) + 1))).random_()
+                if not self.no_antithetic: seeds = torch.cat([seeds, -seeds])
+                assert len(seeds) == self.perturbations, 'Number of created seeds is not equal to wanted perturbations'
+
             # Evaluate perturbations
             workers_start_time = time.time()
             if self.workers > 1:
@@ -709,23 +898,28 @@ class StochasticGradientEstimation(Algorithm):
                 workers_out = pool.map_async(partial(self._eval_wrap, **eval_kwargs), seeds)
                 unperturbed_out = pool.apply_async(self.eval_fun, (self.model, self.env, 42), eval_kwargs_unp)
                 if self.val_env is not None and n_generation % self.val_every == 0:
-                    unperturbed_test_out = pool.apply_async(self.eval_fun, (self.model, self.val_env, 42))
+                    model_class = type(self.model)
+                    val_model = model_class(self.env.observation_space, self.env.action_space) if hasattr(self.env, 'observation_space') else model_class()
+                    val_model.load_state_dict(self.model.state_dict())
+                    val_model.zero_grad()
+                    val_model.eval()
+                    unperturbed_val_out = pool.apply_async(self.eval_fun, (self.model, self.val_env, 42))
                 else:
-                    unperturbed_test_out = None
+                    unperturbed_val_out = None
                 if self.track_parallel and "DISPLAY" in os.environ: pb.track(workers_out)
                 workers_out = workers_out.get(timeout=3600)
                 unperturbed_out = unperturbed_out.get(timeout=3600)
-                if unperturbed_test_out is None:
-                    unperturbed_test_out = {k: None for k in unperturbed_out.keys()}
+                if unperturbed_val_out is None:
+                    unperturbed_val_out = {k: None for k in unperturbed_out.keys()}
                 else:
-                    unperturbed_test_out = unperturbed_test_out.get(timeout=3600)
+                    unperturbed_val_out = unperturbed_val_out.get(timeout=3600)
             else:
                 # Execute sequentially
                 unperturbed_out = self.eval_fun(self.model, self.env, 42, **eval_kwargs_unp)
                 if self.val_env is not None and n_generation % self.val_every == 0:
-                    unperturbed_test_out = self.eval_fun(self.model, self.val_env, 42)
+                    unperturbed_val_out = self.eval_fun(self.model, self.val_env, 42)
                 else:
-                    unperturbed_test_out = {k: None for k in unperturbed_out.keys()}
+                    unperturbed_val_out = {k: None for k in unperturbed_out.keys()}
                 workers_out = []
                 for s in seeds:
                     workers_out.append(self._eval_wrap(s, **eval_kwargs))
@@ -733,21 +927,46 @@ class StochasticGradientEstimation(Algorithm):
             assert 'return' in unperturbed_out.keys() and 'seed' in unperturbed_out.keys(), "The `eval_fun` must give a return and repass the used seed"
             if hasattr(self.env, 'env'):
                 self.sens_inputs = torch.from_numpy(unperturbed_out['inputs'])
+
             # Invert output from list of dicts to dict of lists
             workers_out = dict(zip(workers_out[0], zip(*[d.values() for d in workers_out])))
-            # Recast all outputs as np.ndarrays except the seeds
+
+            # Recast all outputs as np.ndarrays and seeds as torch.LongTensor
             for k, v in filter(lambda i: i[0] != 'seed', workers_out.items()): workers_out[k] = np.array(v)
+            workers_out['seed'] = torch.LongTensor(workers_out['seed'])
+
+            # Append reused seeds and returns (importance mixing)
+            assert (seeds == workers_out['seed']).all(), 'The generated seeds must be the same as those returned by workers (plus reused seeds)'
+            workers_out['return'] = np.append(workers_out['return'], reused_return)  # Order is important (resampling combined with returns later)
+            workers_out['seed'] = torch.cat([workers_out['seed'], reused_seeds])  # Order is important (resampling combined with returns later)
+            # seeds = torch.cat([seeds, torch.LongTensor(reused_seeds)])  # Order is not important here
+            assert self.perturbations <= len(workers_out['seed']) <= self.perturbations + 1
             
-            # Shaping, rank, compute gradients, update parameters and learning rate
+            # Shaping, rank and compute gradients
             rank = self.unperturbed_rank(workers_out['return'], unperturbed_out['return'])
             shaped_returns = self.fitness_shaping(workers_out['return'])
             self.compute_gradients(shaped_returns, workers_out['seed'])
+
+            # Adaptation sampling
+            if type(self.optimizer) == torch.optim.SGD and self.adaptation_sampling:
+                self.adaptation_sampling_learning_rate_update(workers_out['return'], seeds, (current_weights, current_sigma), (0))
+                self.adaptation_sampling_learning_rate_update(workers_out['return'], seeds, (current_weights, current_sigma), (1))
+
+            # Update the parameters
             self.model.cpu()  # TODO Find out why the optimizer requires model on CPU even with args.cuda = True
             self.optimizer.step()
             if type(self.lr_scheduler) == torch.optim.lr_scheduler.ReduceLROnPlateau:
                 self.lr_scheduler.step(unperturbed_out['return'])
             else:
                 self.lr_scheduler.step()
+
+            # Update previous and current weights (importance mixing)
+            previous_weights = list(current_weights)
+            previous_sigma = current_sigma.clone()
+            current_weights = []
+            for p in self.model.parameters():
+                current_weights.append(p.data.clone())
+            current_sigma = self._beta2sigma(self.beta.data)
 
             # Keep track of best model
             if unperturbed_out['return'] >= max_unperturbed_return:
@@ -757,7 +976,7 @@ class StochasticGradientEstimation(Algorithm):
                 max_unperturbed_return = unperturbed_out['return']
 
             # Print and checkpoint
-            self._store_stats(workers_out, unperturbed_out, unperturbed_test_out, n_generation, rank, workers_time)
+            self._store_stats(workers_out, unperturbed_out, unperturbed_val_out, n_generation, rank, workers_time, len(reused_seeds), n_rejected)
             self.print_iter()
             if last_checkpoint_time < time.time() - self.chkpt_int:
                 self.save_checkpoint(best_model_stdct, best_optimizer_stdct, best_algorithm_stdct)
@@ -1188,7 +1407,7 @@ class sNES(sES):
             sign = np.sign(seeds[i])
             torch.manual_seed(abs(seeds[i]))
             torch.cuda.manual_seed(abs(seeds[i]))
-            i = 0
+            # i = 0 
             for layer, param in enumerate(self.model.parameters()):
                 eps = self.get_perturbation(param.size(), sensitivities=self.sensitivities[layer], cuda=self.cuda)
                 if not self.optimize_sigma:
@@ -1215,6 +1434,55 @@ class sNES(sES):
             self.beta.grad = - Variable(beta_gradients, requires_grad=True)
             assert not np.isnan(self.beta.grad.data).any()
             assert not np.isinf(self.beta.grad.data).any()
+
+
+class Backprop(Algorithm):
+    def __init__(self, model, env, optimizer, lr_scheduler, eval_fun, perturbations, batch_size, max_generations, safe_mutation, no_antithetic, **kwargs):
+        self.train_loader = self.env
+        self.test_loader = self.val_env
+        if self.cuda:
+            self.model.cuda()
+        # TODO Add storing of statistics in stats
+
+    def train(self):
+        def train_epoch(epoch):
+            self.model.train()
+            for batch_idx, (data, target) in enumerate(self.train_loader):
+                if self.cuda:
+                    data, target = data.cuda(), target.cuda()
+                data, target = Variable(data), Variable(target)
+                self.optimizer.zero_grad()
+                output = self.model(data)
+                loss = F.nll_loss(output, target)
+                loss.backward()
+                self.optimizer.step()
+                # if batch_idx % args.log_interval == 0:
+                #     print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
+                #         epoch, batch_idx * len(data), len(self.train_loader.dataset),
+                #         100. * batch_idx / len(self.train_loader), loss.data[0]))
+            
+        for epoch in range(1, self.max_generations + 1):
+            self.test()
+            train_epoch(epoch)
+            torch.save(self.model.state_dict(), 'latest.state')
+
+    def test(self):
+        self.model.eval()
+        test_loss = 0
+        correct = 0
+        for data, target in self.test_loader:
+            if self.cuda:
+                data, target = data.cuda(), target.cuda()
+            data, target = Variable(data, volatile=True), Variable(target)
+            output = self.model(data)
+            test_loss += F.nll_loss(output, target, size_average=False).data[0] # sum up batch loss
+            pred = output.data.max(1, keepdim=True)[1] # get the index of the max log-probability
+            correct += pred.eq(target.data.view_as(pred)).cpu().sum()
+
+        # test_loss /= len(self.test_loader.dataset)
+        # print('\nTest set: Average loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)\n'.format(
+        #     test_loss, correct, len(self.test_loader.dataset),
+        #     100. * correct / len(self.test_loader.dataset)))
 
 
 class xNES(StochasticGradientEstimation):
@@ -1464,6 +1732,7 @@ class xNES(StochasticGradientEstimation):
         #     weight_gradients += 1 / (self.perturbations * self.sigma) * retrn * eps
         #     beta_gradients += 1 / (self.perturbations * self.beta.exp()) * retrn * (eps.pow(2).sum() - 1)
         # weight_gradients = self._vec2modelrepr(weight_gradients, only_trainable=True)
+
 
 
 class GA(ES):
