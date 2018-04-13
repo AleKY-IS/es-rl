@@ -4,6 +4,7 @@
 import os
 import argparse
 import IPython
+import torch
 import filesystem as fs
 
 if __name__ == '__main__':
@@ -25,12 +26,8 @@ if __name__ == '__main__':
         package_root_this_file = fs.get_parent(this_file_dir_local, 'es-rl')
         args.d = os.path.join(package_root_this_file, 'experiments', 'checkpoints')
     if args.f is None:
-        args.keep = ['state-dict-algorithm.pkl', 'stats.csv']
+        args.keep = ['state-dict-algorithm.pkl', 'stats.csv', 'init.log']
         args.delete = []
-        # args.delete = args.f
-        # args.f = ['state-dict-best-algorithm.pkl', 'state-dict-best-optimizer.pkl', 
-        #           'state-dict-best-model.pkl', 'state-dict-optimizer.pkl',
-        #           'state-dict-model.pkl']
     assert args.d is not None and args.delete is not None
 
     # Run
@@ -40,8 +37,14 @@ if __name__ == '__main__':
             if filename in args.delete:
                 os.remove(os.path.join(root, filename))
                 i += 1
-            if filename not in args.keep:
+            elif filename not in args.keep:
                 os.remove(os.path.join(root, filename))
+                i += 1
+            # elif filename == 'state-dict-algorithm.pkl':
+            #     s = torch.load(os.path.join(root, filename))
+            #     if 'sensitivities' in s:
+            #         del s['sensitivities']
+            #         torch.save(s, os.path.join(root, filename))
         if len(filenames) == 1 and filenames[0] == 'init.log':
             os.remove(os.path.join(root, filenames[0]))
             os.rmdir(os.path.join(root))

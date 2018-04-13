@@ -90,8 +90,8 @@ def invert_signs(stats_list, keys='all'):
         keys = {'return_unp', 'return_max', 'return_min', 'return_avg', 'return_val'}
     for s in stats_list:
         if (np.array(s['return_unp']) < 0).all():
-            for k in {'return_unp', 'return_max', 'return_min', 'return_avg', 'return_val'}.intersection(keys):
-                s[k] = [-retrn for retrn in s[k] if k in s.keys()]
+            for k in {'return_unp', 'return_max', 'return_min', 'return_avg', 'return_val'}.intersection(keys).intersection(set(s.keys())):
+                s[k] = [-retrn for retrn in s[k]]
 
 
 def get_checkpoint_directories(dir):
