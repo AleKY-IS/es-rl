@@ -151,12 +151,12 @@ def apply_sigmoid_and_transform(x, **kwargs):
     return y
 
 
-class ClassicalControlFFN(AbstractESModel):
+class ClassicalControlFNN(AbstractESModel):
     """
-    FFN for classical control problems
+    FNN for classical control problems
     """
     def __init__(self, observation_space, action_space):
-        super(ClassicalControlFFN, self).__init__()
+        super(ClassicalControlFNN, self).__init__()
         if type(action_space) is gym.spaces.Box:
             # Continuous action space:
             # Physical output to be used directly.
@@ -210,12 +210,71 @@ class ClassicalControlFFN(AbstractESModel):
         return x
 
 
-class MujocoFFN(AbstractESModel):
+class ClassicalControlRNN(AbstractESModel):
     """
-    FFN for Mujoco control problems
+    RNN for classical control problems
     """
     def __init__(self, observation_space, action_space):
-        super(MujocoFFN, self).__init__()
+        super(ClassicalControlRNN, self).__init__()
+        if type(action_space) is gym.spaces.Box:
+            # Continuous action space:
+            # Physical output to be used directly.
+            self.out_dim = action_space.shape
+            self.n_out = int(np.prod(action_space.shape))
+            out_mins = action_space.low if not np.isinf(action_space.low).any() else - np.ones(action_space.shape)
+            out_maxs = action_space.high if not np.isinf(action_space.high).any() else np.ones(action_space.shape)
+            sigmoid_mins = - np.ones(out_mins.shape)
+            sigmoid_maxs = np.ones(out_maxs.shape)
+            trsf_in = {'view_dim': (-1, *self.out_dim), 'in_maxs': sigmoid_maxs, 'in_mins': sigmoid_mins, 'out_maxs': out_maxs, 'out_mins': out_mins}
+            self.out_activation = partial(apply_sigmoid_and_transform, **trsf_in)
+        elif type(action_space) is gym.spaces.Discrete:
+            # Discrete action space: 
+            # Probabilistic output to be indexed by maximum probability.
+            # Output is the index of the most likely action.
+            self.n_out = action_space.n
+            self.out_activation = nn.LogSoftmax(dim=1)
+        elif type(action_space) is gym.spaces.MultiDiscrete:
+            IPython.embed()
+            pass
+        elif type(action_space) is gym.spaces.MultiBinary:
+            IPython.embed()
+            pass
+        elif type(action_space) is gym.spaces.tuple:
+            # Tuple of different action spaces
+            # https://github.com/openai/gym/blob/master/gym/envs/algorithmic/algorithmic_env.py
+            IPython.embed()
+            pass
+
+        assert hasattr(observation_space, 'shape') and len(observation_space.shape) == 1
+        assert hasattr(action_space, 'shape')
+        self.in_dim = observation_space.shape
+        self.n_in = int(np.prod(observation_space.shape))
+        self.lin1 = nn.Linear(self.n_in, 32)
+        self.relu1 = nn.ReLU()
+        self.lin2 = nn.Linear(32, 64)
+        self.relu2 = nn.ReLU()
+        self.lin3 = nn.Linear(64, 64)
+        self.relu3 = nn.ReLU()
+        self.lin4 = nn.Linear(64, 32)
+        self.relu4 = nn.ReLU()
+        self.lin5 = nn.Linear(32, self.n_out)
+        self._initialize_weights()
+
+    def forward(self, x):
+        x = self.relu1(self.lin1(x))
+        x = self.relu2(self.lin2(x))
+        x = self.relu3(self.lin3(x))
+        x = self.relu4(self.lin4(x))
+        x = self.out_activation(self.lin5(x))
+        return x
+
+
+class MujocoFNN(AbstractESModel):
+    """
+    FNN for Mujoco control problems
+    """
+    def __init__(self, observation_space, action_space):
+        super(MujocoFNN, self).__init__()
         if type(action_space) is gym.spaces.Box:
             # Continuous action space:
             # Physical output to be used directly.
@@ -357,6 +416,9 @@ class MNISTNet(AbstractESModel):
         x = self.fc1_relu(self.fc1_bn(self.fc1(x)))
         x = self.fc2_logsoftmax(self.fc2(x))
         return x
+
+    # def count_parameters(self, only_trainable=True):
+    #     return 22000
 
 
 class MNISTNetDropout(AbstractESModel):
