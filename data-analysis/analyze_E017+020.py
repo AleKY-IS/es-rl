@@ -43,7 +43,7 @@ def create_plots(stats_list, keys_to_plot, groups, result_dir, include_val=True)
             list_of_series_val = [np.array(l) for l in list_of_series_val]
             list_of_series_val = [l[~np.isnan(l)].tolist() for l in list_of_series_val]
             list_of_series.extend(list_of_series_val)
-            groups_val = np.array([g + ', Validation' for g in groups])
+            groups_val = np.array([g + ', validation' for g in groups])
             groups = np.append(groups, groups_val)
 
         if k is 'return_val':
@@ -54,11 +54,11 @@ def create_plots(stats_list, keys_to_plot, groups, result_dir, include_val=True)
         groups.sort()
 
         # Plot
-        plot.timeseries_mean_grouped(list_of_genera, list_of_series, groups, xlabel='generations', ylabel=k, lookup_labels=True)
+        plot.timeseries_mean_grouped(list_of_genera, list_of_series, groups, xlabel='generations', ylabel=k, map_labels='supervised')
         if 'return' in k:
-            plt.gca().set_ylim(0, 1)
+            plt.gca().set_ylim(0, 1.5)
         elif 'accuracy' in k:
-            plt.gca().set_ylim(0.6, 1)
+            plt.gca().set_ylim(0.4, 1)
         plt.savefig(os.path.join(result_dir, k + '-all-series-mean-sd' + '.pdf'), bbox_inches='tight')
         plt.close()
         # Progress
@@ -143,20 +143,3 @@ if __name__ == '__main__':
         copy_tree(result_dir + '-init-analysis', dst_dir + '-init-analysis')
         copy_tree(result_dir + '-bn-analysis', dst_dir + '-bn-analysis')
         
-
-
-    # Analyze
-    # keys_to_plot = {'return_unp', 'return_avg', 'return_val', 'accuracy_unp', 'accuracy_avg', 'accuracy_val'}
-    # for experiment_id, optimizer in zip(experiment_ids, optimizers):
-    #     # Get directories
-    #     directories, result_dir = get_directories(experiment_id)
-    #     if len(directories) == 0:
-    #         print('No results for {}'.format(experiment_id))
-    #         continue
-
-    #     # Load data
-    #     stats, groups = load(experiment_id, optimizer)
-
-    #     # Plot
-    #     invert_signs(stats)
-    #     create_plots(stats, keys_to_plot, groups, result_dir, include_val=False)

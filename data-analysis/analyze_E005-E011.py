@@ -40,11 +40,16 @@ Eid = 'E011'
 if not args.d:
     # args.d = "/home/jakob/mnt/Documents/es-rl/experiments/checkpoints/E005"   # Linux HPC
     # args.d = "/home/jakob/Dropbox/es-rl/experiments/checkpoints/E005-sca"     # Linux
-    # args.d = "/Users/Jakob/mnt/Documents/es-rl/experiments/checkpoints/E011-sca"  # Mac
     # args.d = "/home/jakob/mnt/Documents/es-rl/experiments/checkpoints/E011"   # Linux HPC
-    args.d = "/home/jakob/Dropbox/es-rl/experiments/checkpoints/" + Eid + "-sca"     # Linux 
+    # args.d = "/home/jakob/Dropbox/es-rl/experiments/checkpoints/" + Eid + "-sca"     # Linux 
 
-dst_dir = '/home/jakob/Dropbox/Apps/ShareLaTeX/Master\'s Thesis/graphics/' + Eid + '-sca-analysis'
+    # dst_dir = '/home/jakob/Dropbox/Apps/ShareLaTeX/Master\'s Thesis/graphics/' + Eid + '-sca-analysis'
+
+    # args.d = "/Users/Jakob/mnt/Documents/es-rl/experiments/checkpoints/" + Eid + "-sca"
+    args.d = "/Users/Jakob/Dropbox/es-rl/experiments/checkpoints/" + Eid + "-sca"
+    dst_dir = '/Users/Jakob/Dropbox/Apps/ShareLaTeX/Master\'s Thesis/graphics/' + Eid + '-sca-analysis'
+
+
 save_dir = os.path.join(args.d, Eid + '-sca-analysis')
 if not os.path.exists(save_dir):
     os.mkdir(save_dir)
@@ -113,7 +118,7 @@ for i in range(0, len(algorithm_states)):
         parallel_fraction_means = np.append(parallel_fraction_means, np.mean(stats[i]['parallel_fraction']))
         parallel_fraction_stds = np.append(parallel_fraction_stds, np.std(stats[i]['parallel_fraction']))
 
-# Sort according to number of workers. This makes lines in the plots nice
+# Sort according to number of CPUs. This makes lines in the plots nice
 workers = np.array([p[0] for p in worker_perturbation_pairs])
 perturbations = np.array([p[1] for p in worker_perturbation_pairs])
 sort_indices = np.argsort(workers)
@@ -192,7 +197,10 @@ for i_pert in sorted(np.unique(perturbations_SP), reverse=False):
 
 
 # Plotting
-# Figure 1: Average time per iteration vs number of workers, logarithmic y
+colors = plt.cm.gnuplot(np.linspace(0, 1, 8))
+matplotlib.rcParams['axes.color_cycle'] = colors
+
+# Figure 1: Average time per iteration vs number of CPUs, logarithmic y
 fig, ax = plt.subplots()
 legend = []
 for i_pert in sorted(np.unique(perturbations), reverse=False):
@@ -202,14 +210,14 @@ for i_pert in sorted(np.unique(perturbations), reverse=False):
     s = time_per_iteration_stds[ids]
     legend.append(str(i_pert))
     ax.errorbar(x, y, yerr=s, fmt='-o')
-plt.xlabel('Number of workers')
+plt.xlabel('Number of CPUs')
 plt.ylabel('Average time per iteration [s]')
 box = ax.get_position()
 ax.set_position([box.x0, box.y0, box.width * 0.8, box.height])
 ax.legend(legend, title='Perturbations', loc='center left', bbox_to_anchor=(1, 0.5))
 plt.savefig(os.path.join(save_dir, Eid + '-scaling-01.pdf'), bbox_inches='tight')
 
-# Figure 2: Average time per iteration vs number of workers, logarithmic y and x
+# Figure 2: Average time per iteration vs number of CPUs, logarithmic y and x
 fig, ax = plt.subplots()
 legend = []
 for i_pert in sorted(np.unique(perturbations), reverse=False):
@@ -222,13 +230,13 @@ for i_pert in sorted(np.unique(perturbations), reverse=False):
 box = ax.get_position()
 ax.set_position([box.x0, box.y0, box.width * 0.8, box.height])
 ax.legend(legend, title='Perturbations', loc='center left', bbox_to_anchor=(1, 0.5))
-plt.xlabel('Number of workers')
+plt.xlabel('Number of CPUs')
 plt.ylabel('Average time per iteration [s]')
 ax.set_yscale('log')
 ax.set_xscale('log', basex=2)
 plt.savefig(os.path.join(save_dir, Eid + '-scaling-02.pdf'), bbox_inches='tight')
 
-# Figure 3: Average time per iteration vs number of workers, logarithmic y and x, smoothed interpolation
+# Figure 3: Average time per iteration vs number of CPUs, logarithmic y and x, smoothed interpolation
 fig, ax = plt.subplots()
 ax.set_prop_cycle(None)
 legend = []
@@ -247,7 +255,7 @@ for i_pert in sorted(np.unique(perturbations), reverse=False):
     color = next(ax._get_lines.prop_cycler)['color']
     ax.plot(x_interpolated, y_smoothed, color=color)
     ax.errorbar(x, y, yerr=s, fmt='o', color=color)
-plt.xlabel('Number of workers')
+plt.xlabel('Number of CPUs')
 plt.ylabel('Time per iteration [s]')
 # ax.legend(legend)
 ax.set_yscale('log')
@@ -264,7 +272,7 @@ for i_pert in sorted(np.unique(perturbations), reverse=False):
     ax.errorbar(workers_SP[i_pert], SP[i_pert], yerr=SP_std[i_pert], fmt='-o')
 ax.errorbar(workers_SP[np.unique(perturbations)[0]], workers_SP[np.unique(perturbations)[0]])
 legend.append("Ideal")
-plt.xlabel('Number of workers')
+plt.xlabel('Number of CPUs')
 plt.ylabel('Speed-up factor')
 ax.legend(legend, title='Perturbations', loc='upper left', ncol=2, columnspacing=0.5)
 plt.savefig(os.path.join(save_dir, Eid + '-scaling-04.pdf'), bbox_inches='tight')
@@ -303,7 +311,7 @@ for i_pert in sorted(np.unique(perturbations), reverse=False):
     s = parallel_fraction_stds[ids]
     legend.append(str(i_pert) + ' perturbations')
     ax.errorbar(x, y, yerr=s, fmt='-o')
-plt.xlabel('Number of workers')
+plt.xlabel('Number of CPUs')
 plt.ylabel('Average parallel fraction')
 ax.legend(legend)
 # ax.set_yscale('log')

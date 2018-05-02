@@ -44,7 +44,7 @@ def create_plots(stats_list, keys_to_plot, x_key, groups, result_dir, include_va
             list_of_series_val = [np.array(l) for l in list_of_series_val]
             list_of_series_val = [l[~np.isnan(l)].tolist() for l in list_of_series_val]
             list_of_series.extend(list_of_series_val)
-            groups_val = np.array([g + ', Validation' for g in groups])
+            groups_val = np.array([g + ', validation' for g in groups])
             groups = np.append(groups, groups_val)
 
         # Sort
@@ -53,7 +53,7 @@ def create_plots(stats_list, keys_to_plot, x_key, groups, result_dir, include_va
         groups.sort()
 
         # Plot
-        plot.timeseries_mean_grouped(list_of_xs, list_of_series, groups, xlabel=x_key, ylabel=k)
+        plot.timeseries_mean_grouped(list_of_xs, list_of_series, groups, xlabel=x_key, ylabel=k, map_labels='supervised')
         if 'return' in k:
             plt.gca().set_ylim(0, 1)
         elif 'accuracy' in k:
@@ -85,7 +85,7 @@ def get_directories(experiment_id):
     return directories, result_dir, dst_dir
 
 
-def analyze(experiment_id, optimizer, keys_to_plot):
+def analyze(experiment_id, keys_to_plot):
     directories, result_dir, dst_dir = get_directories(experiment_id)
     if len(directories) == 0:
         print('No results for {}'.format(experiment_id))
@@ -95,20 +95,35 @@ def analyze(experiment_id, optimizer, keys_to_plot):
     groups = np.array([])
     for d in directories:
         try:
+            st = pd.read_csv(os.path.join(d, 'stats.csv'))
             s = torch.load(os.path.join(d, 'state-dict-algorithm.pkl'))
             fr = s['forced_refresh']
-            if fr == 0.01 or fr == 1.0:
-                groups = np.append(groups, r'$\alpha={}$'.format(fr))
-                st = pd.read_csv(os.path.join(d, 'stats.csv'))
+            with open(os.path.join(d, 'init.log'), 'r') as f:
+                s = f.read()
+            i = s.find('model_params')
+            i = s.find('momentum', i)
+            j = s.find(',', i)
+            m = float(s[i+11:j])
+            if (experiment_id == 'E025-IS' or experiment_id == 'E026-IS-nomom') and (fr == 0.01 or fr == 1.0):
+                # gr_lab = r'$\alpha={}, m={}$'.format(fr, m)
+                gr_lab = r'$\alpha={}$'.format(fr)
+                groups = np.append(groups, gr_lab)
+                stats.append(st)
+            elif experiment_id == 'E026-IS' and fr == 0 or fr == 10:
+                gr_lab = str(int(fr)) + ' randomly reused'
+                groups = np.append(groups, gr_lab)
                 stats.append(st)
         except:
             print("None in: " + d)
     # Plot
-    invert_signs(stats)
-    create_plots(stats, keys_to_plot, 'generations', groups, result_dir, include_val=True)
-    create_plots(stats, keys_to_plot, 'walltimes', groups, result_dir, include_val=True)
-    copy_tree(result_dir, dst_dir)
-    
+    # IPython.embed()
+    if stats:
+        invert_signs(stats)
+        create_plots(stats, keys_to_plot, 'generations', groups, result_dir, include_val=True)
+        # create_plots(stats, keys_to_plot, 'walltimes', groups, result_dir, include_val=True)
+        # copy_tree(result_dir, dst_dir)
+    else:
+        print('No matches for ' + experiment_id)
 
 
 if __name__ == '__main__':
@@ -117,12 +132,65 @@ if __name__ == '__main__':
     # Font setting
     matplotlib.rcParams.update({'font.size': 12})
     # Experiment IDs
-    experiment_ids = ['E025-IS', 'E026-IS']
-    # Optimizer labels
-    # optimizers = [', SGD', ', ADAM']
-    optimizers = ['', '']
+    experiment_ids = ['E025-IS', 'E026-IS', 'E026-IS-nomom']
     # Keys to analyze
     keys_to_plot = ['return_unp', 'return_avg', 'accuracy_unp', 'accuracy_avg', 'n_reused']
     # Analyze
-    for experiment_id, optimizer in zip(experiment_ids, optimizers):
-        analyze(experiment_id, optimizer, keys_to_plot)
+    for experiment_id in experiment_ids:
+        analyze(experiment_id, keys_to_plot)
+
+
+
+def analyzeasd(experiment_id, optimizer, keys_to_plot):
+    directories, result_dir, dst_dir = get_directories(experiment_id)
+    if len(directories) == 0:
+        print('No results for {}'.format(experiment_id))
+        return
+    # Load
+    stats = []
+    stats_m_zero = []
+    stats_m_nonzero = []
+    groups = np.array([])
+    groups_m_zero = np.array([])
+    groups_m_nonzero = np.array([])
+    for d in directories:
+        try:
+            st = pd.read_csv(os.path.join(d, 'stats.csv'))
+            s = torch.load(os.path.join(d, 'state-dict-algorithm.pkl'))
+            fr = s['forced_refresh']
+            with open(os.path.join(d, 'init.log'), 'r') as f:
+                s = f.read()
+            i = s.find('model_params')
+            i = s.find('momentum', i)
+            j = s.find(',', i)
+            m = float(s[i+11:j])
+            if m == 0.0:
+                if fr == 0.01 or fr == 1.0:
+                    gr_lab = r'$\alpha={}, m={}$'.format(fr, m)
+                elif fr > 1:
+                    gr_lab = str(fr) + ' randomly reused'
+                groups_m_zero = np.append(groups_m_zero, gr_lab)
+                stats_m_zero.append(st)
+            else:
+                if fr == 0.01 or fr == 1.0:
+                    gr_lab = r'$\alpha={}, m={}$'.format(fr, m)
+                elif fr > 1:
+                    gr_lab = str(fr) + ' randomly reused'
+                groups_m_nonzero = np.append(groups_m_nonzero, gr_lab)
+                stats_m_nonzero.append(st)
+            groups = np.append(groups, gr_lab)
+            stats.append(st)
+        except:
+            print("None in: " + d)
+    # IPython.embed()
+    invert_signs(stats)
+    invert_signs(stats_m_nonzero)
+    invert_signs(stats_m_zero)
+    # Plot
+    if stats:
+        create_plots(stats, keys_to_plot, 'generations', groups, result_dir, include_val=True)
+    # if stats_m_nonzero:
+    #     create_plots(stats_m_nonzero, keys_to_plot, 'generations', groups_m_nonzero, result_dir, include_val=True)
+    # if stats_m_zero:
+    #     create_plots(stats_m_zero, keys_to_plot, 'generations', groups_m_zero, result_dir, include_val=True)
+    copy_tree(result_dir, dst_dir)

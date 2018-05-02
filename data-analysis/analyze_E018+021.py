@@ -43,7 +43,7 @@ def create_plots(stats_list, keys_to_plot, groups, result_dir, include_val=True)
             list_of_series_val = [np.array(l) for l in list_of_series_val]
             list_of_series_val = [l[~np.isnan(l)].tolist() for l in list_of_series_val]
             list_of_series.extend(list_of_series_val)
-            groups_val = np.array([g + ', Validation' for g in groups])
+            groups_val = np.array([g + ', validation' for g in groups])
             groups = np.append(groups, groups_val)
 
         # Sort
@@ -52,11 +52,11 @@ def create_plots(stats_list, keys_to_plot, groups, result_dir, include_val=True)
         groups.sort()
 
         # Plot
-        plot.timeseries_mean_grouped(list_of_genera, list_of_series, groups, xlabel='generations', ylabel=k)
+        plot.timeseries_mean_grouped(list_of_genera, list_of_series, groups, xlabel='generations', ylabel=k, map_labels='supervised')
         if 'return' in k:
-            plt.gca().set_ylim(0, 1)
+            plt.gca().set_ylim(0, 1.5)
         elif 'accuracy' in k:
-            plt.gca().set_ylim(0.6, 1)
+            plt.gca().set_ylim(0.4, 1)
         plt.savefig(os.path.join(result_dir, k + '-all-series-mean-sd' + '.pdf'), bbox_inches='tight')
         plt.close()
         # Progress

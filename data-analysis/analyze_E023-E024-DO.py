@@ -52,7 +52,7 @@ def create_plots(stats_list, keys_to_plot, groups, result_dir, include_val=True)
         groups.sort()
 
         # Plot
-        plot.timeseries_mean_grouped(list_of_genera, list_of_series, groups, xlabel='generations', ylabel=k)
+        plot.timeseries_mean_grouped(list_of_genera, list_of_series, groups, xlabel='generations', ylabel=k, map_labels='supervised')
         if 'return' in k:
             plt.gca().set_ylim(0, 2)
         elif 'accuracy' in k:
@@ -98,7 +98,7 @@ def analyze(experiment_id, optimizer, keys_to_plot):
                 if 'MNISTNetDropout' in s:
                     groups = np.append(groups, 'Dropout' + optimizer) # Has BN
                 elif 'MNISTNetNoBN' in s:
-                    groups = np.append(groups, 'Neither' + optimizer) # Has Xavier Glorot
+                    groups = np.append(groups, 'No dropout' + optimizer) # Has Xavier Glorot
                 # elif 'MNISTNet' in s:
                 #     groups = np.append(groups, 'Batchnorm') # Has Xavier Glorot
                 stats.append(st)
@@ -108,7 +108,6 @@ def analyze(experiment_id, optimizer, keys_to_plot):
     invert_signs(stats)
     create_plots(stats, keys_to_plot, groups, result_dir)
     copy_tree(result_dir, dst_dir)
-    
 
 
 if __name__ == '__main__':
