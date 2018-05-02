@@ -194,11 +194,15 @@ class ClassicalControlFNN(AbstractESModel):
         self.relu1 = nn.ReLU()
         self.lin2 = nn.Linear(32, 64)
         self.relu2 = nn.ReLU()
-        self.lin3 = nn.Linear(64, 64)
+        self.lin3 = nn.Linear(64, 128)
         self.relu3 = nn.ReLU()
-        self.lin4 = nn.Linear(64, 32)
+        self.lin4 = nn.Linear(128, 128)
         self.relu4 = nn.ReLU()
-        self.lin5 = nn.Linear(32, self.n_out)
+        self.lin5 = nn.Linear(128, 64)
+        self.relu5 = nn.ReLU()
+        self.lin6 = nn.Linear(64, 32)
+        self.relu6 = nn.ReLU()
+        self.lin7 = nn.Linear(32, self.n_out)
         self._initialize_weights()
 
     def forward(self, x):
@@ -206,7 +210,9 @@ class ClassicalControlFNN(AbstractESModel):
         x = self.relu2(self.lin2(x))
         x = self.relu3(self.lin3(x))
         x = self.relu4(self.lin4(x))
-        x = self.out_activation(self.lin5(x))
+        x = self.relu5(self.lin5(x))
+        x = self.relu6(self.lin6(x))
+        x = self.out_activation(self.lin7(x))
         return x
 
 
@@ -233,21 +239,10 @@ class ClassicalControlRNN(AbstractESModel):
             # Output is the index of the most likely action.
             self.n_out = action_space.n
             self.out_activation = nn.LogSoftmax(dim=1)
-        elif type(action_space) is gym.spaces.MultiDiscrete:
-            IPython.embed()
-            pass
-        elif type(action_space) is gym.spaces.MultiBinary:
-            IPython.embed()
-            pass
-        elif type(action_space) is gym.spaces.tuple:
-            # Tuple of different action spaces
-            # https://github.com/openai/gym/blob/master/gym/envs/algorithmic/algorithmic_env.py
-            IPython.embed()
-            pass
 
         assert hasattr(observation_space, 'shape') and len(observation_space.shape) == 1
         assert hasattr(action_space, 'shape')
-        self.in_dim = observation_space.shape
+        
         self.n_in = int(np.prod(observation_space.shape))
         self.lin1 = nn.Linear(self.n_in, 32)
         self.relu1 = nn.ReLU()
@@ -416,9 +411,6 @@ class MNISTNet(AbstractESModel):
         x = self.fc1_relu(self.fc1_bn(self.fc1(x)))
         x = self.fc2_logsoftmax(self.fc2(x))
         return x
-
-    # def count_parameters(self, only_trainable=True):
-    #     return 22000
 
 
 class MNISTNetDropout(AbstractESModel):
