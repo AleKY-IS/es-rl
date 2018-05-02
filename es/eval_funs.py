@@ -25,11 +25,17 @@ def get_action(actions, env):
     return action
 
 
-def gym_rollout(model, env, random_seed, silent=False, collect_inputs=False, do_cuda=False, max_episode_length=int(1e6), **kwargs):
+def gym_rollout(model, env, random_seed, mseed=None, silent=False, collect_inputs=False, do_cuda=False, max_episode_length=int(1e6), **kwargs):
     """
     Function to do rollouts of a policy defined by `model` in given environment
     """
     # Reset environment
+    if mseed is not None:
+        # Seed environment identically across workers
+        env.seed(mseed)
+    else:
+        # Random init
+        env.seed(np.random.randint(0, 10**16))
     state = env.reset()
     state = Variable(torch.from_numpy(state).float(), requires_grad=True).unsqueeze(0)
     retrn = 0
@@ -134,14 +140,20 @@ def gym_test(model, env, max_episode_length, n_episodes, chkpt_dir=None, **kwarg
     print(s)
 
 
-def supervised_eval(model, train_loader, random_seed, silent=False, collect_inputs=False, do_cuda=False, **kwargs):
+def supervised_eval(model, train_loader, random_seed, mseed=None, silent=False, collect_inputs=False, do_cuda=False, **kwargs):
     """
     Function to evaluate the fitness of a supervised model.
 
     For supervised training, the training data set loader is viewed as the "environment"
     and is passed in the env variable (train_loader).
     """
-    (data, target) = next(iter(train_loader))
+    if mseed is not None:
+        # Use common random numbers
+        torch.manual_seed(mseed)
+        (data, target) = next(iter(train_loader))
+    else:
+        # Sample unique batch
+        (data, target) = next(iter(train_loader))
     data, target = Variable(data), Variable(target)
     if do_cuda:
         data, target = data.cuda(), target.cuda()
