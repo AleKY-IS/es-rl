@@ -23,7 +23,7 @@ import torch.multiprocessing as mp
 from torch.autograd import Variable
 
 from context import utils
-from utils.misc import get_inputs_from_dict, to_numeric
+from utils.misc import get_inputs_from_dict, to_numeric, isint
 from utils.plotting import plot_stats
 from utils.progress import PoolProgress
 from utils.torchutils import summarize_model
@@ -50,7 +50,7 @@ class Algorithm(object):
 
     __metaclass__ = ABCMeta
 
-    def __init__(self, model, env, optimizer, lr_scheduler, eval_fun, perturbations, batch_size, max_generations, safe_mutation, no_antithetic, adaptation_sampling=True, forced_refresh=0.01, val_env=None, val_every=25, workers=mp.cpu_count(), chkpt_dir=None, chkpt_int=600, track_parallel=False, cuda=False, silent=False):
+    def __init__(self, model, env, optimizer, lr_scheduler, eval_fun, perturbations, batch_size, max_generations, safe_mutation, no_antithetic, common_random_numbers=False, adaptation_sampling=True, forced_refresh=0.01, val_env=None, val_every=25, workers=mp.cpu_count(), chkpt_dir=None, chkpt_int=600, track_parallel=False, cuda=False, silent=False):
         self.algorithm = self.__class__.__name__
         # Algorithmic attributes
         self.model = model
@@ -62,6 +62,7 @@ class Algorithm(object):
         self.safe_mutation = safe_mutation
         self.no_antithetic = no_antithetic
         self.adaptation_sampling = adaptation_sampling
+        self.common_random_numbers = common_random_numbers
         self.perturbations = perturbations
         self.forced_refresh = forced_refresh  # Forced resampling rate for importance mixing
         self.batch_size = batch_size
@@ -416,12 +417,17 @@ class Algorithm(object):
         torch.cuda.manual_seed(abs(seed))
         sample = []
         for p, w, s, sens in zip(self.model.parameters(), mean, sigma, self.sensitivities):
-            eps = int(sign) * self.get_perturbation(p.size(), sensitivities=sens, cuda=self.cuda)
+            eps = sign * self.get_perturbation(p.size(), sensitivities=sens, cuda=self.cuda)
             sample.append(w + s * eps)
+        # print("Importance mixing")
+        # print(type(seed))
+        # print(type(sign))
+        # print(seed)
+        # print(eps) # REMOVE
         return self._modelrepr2vec(sample)
     
     @staticmethod
-    def diagonal_gaussian_pdf(sample, mean, sigma):
+    def gaussian_log_p(sample, mean, sigma):
         """Separable case. PDF is product of univariate Gaussian PDFs
         """
         log_p = - 0.5 * sample.numel() * np.log(2*np.pi) - 0.5 * sigma.pow(2).prod() - 0.5 * sigma.pow(-2) * (sample - mean) @ (sample - mean)
@@ -430,6 +436,36 @@ class Algorithm(object):
         #     n = torch.distributions.Normal(m, s)
         #     log_p += n.log_prob(sample_i)
         return log_p
+
+    @staticmethod
+    def compute_importance_weight(sample, m1, s1, m2, s2):
+        iw = np.exp(self.gaussian_log_p(sample, m1, s1) - self.gaussian_log_p(sample, m2, s2))
+        return iw
+
+    @staticmethod
+    def cosine_similarity(v1, v2, dim=0, eps=1e-8):
+        w12 = torch.sum(v1 * v2, dim=dim)
+        w1 = torch.norm(v1, 2, dim=dim)
+        w2 = torch.norm(v2, 2, dim=dim)
+        return (w12 / (w1 * w2).clamp(min=eps)).clamp(max=1)
+
+    def compute_pseudo_importance_weight(self, s, m1, s1, m2, s2):
+        """Computes the ratio of the cosine similarity of the sample to each of the means.
+        
+        This functions as a pseudo-importance weight.
+        The more similar the sample is to m1, the higher the importance weight
+        """
+        # Cosine similarity
+        cs1 = self.cosine_similarity(s, m1)
+        cs2 = self.cosine_similarity(s, m2)
+        # Angular distance
+        nad1 = cs1.acos()/np.pi
+        nad2 = cs2.acos()/np.pi
+        # Angular similarity
+        nas1 = 1 - nad1
+        nas2 = 1 - nad2
+        iw = nas1 / nas2
+        return iw, nas1, nas2
 
     def importance_mixing(self, seeds, current_pdf_pars, previous_pdf_pars):
         # Get input
@@ -447,6 +483,13 @@ class Algorithm(object):
             elif self.optimize_sigma == 'per-weight':
                 pass
 
+        # curr_mean = torch.FloatTensor([0.1])
+        # curr_sigma = torch.FloatTensor([1])
+        # prev_mean = torch.FloatTensor([0])
+        # prev_sigma = torch.FloatTensor([1])
+        # sample = torch.FloatTensor(1).normal_()
+        # importance_weight = np.exp(self.gaussian_log_p(sample, curr_mean, curr_sigma) - self.gaussian_log_p(sample, prev_mean, prev_sigma))
+
         # Rejection sample on previous population keeping some samples for reuse
         # TODO: If antithetic maybe loop only over positives and always accept/reject pairwise?
         reused_ids = []
@@ -457,7 +500,7 @@ class Algorithm(object):
                 sample = self.generate_sample(seeds[i], prev_mean, prev_sigma)
                 prev_mean, prev_sigma = self._modelrepr2vec(prev_mean), self._modelrepr2vec(prev_sigma)
                 # Reject/accept old sample into new distribution using importance weights
-                importance_weight = np.exp(self.diagonal_gaussian_pdf(sample, curr_mean, curr_sigma) - self.diagonal_gaussian_pdf(sample, prev_mean, prev_sigma))
+                importance_weight = self.compute_importance_weight(sample, curr_mean, curr_sigma, prev_mean, prev_sigma)
                 p_accept = (1 - self.forced_refresh) * importance_weight
                 r = np.random.uniform(0, 1)
                 if r < p_accept:
@@ -465,9 +508,10 @@ class Algorithm(object):
                 # Never use only old samples
                 if self.perturbations - len(reused_ids) <= max(1, self.perturbations * self.forced_refresh):
                     break
-        reused_seeds = seeds[reused_ids]
-
-        # Reverse rejection sample until the wanted total population size is reached
+        
+        reused_seeds = seeds[reused_ids] if reused_ids else torch.LongTensor([])
+        # Reverse rejection sample from new distribution until the wanted total population size is reached
+        # always making sure the new population conforms to the new search distribution.
         new_seeds = torch.LongTensor([])
         n_rejected = 0
         while len(reused_seeds) + len(new_seeds) < self.perturbations:
@@ -475,7 +519,7 @@ class Algorithm(object):
             curr_mean, curr_sigma = self._vec2modelrepr(curr_mean), self._vec2modelrepr(curr_sigma)
             sample = self.generate_sample(seed[0], curr_mean, curr_sigma)
             curr_mean, curr_sigma = self._modelrepr2vec(curr_mean), self._modelrepr2vec(curr_sigma)
-            importance_weight = np.exp(self.diagonal_gaussian_pdf(sample, prev_mean, prev_sigma) - self.diagonal_gaussian_pdf(sample, curr_mean, curr_sigma))
+            importance_weight = self.compute_importance_weight(sample, curr_mean, curr_sigma, prev_mean, prev_sigma)
             p_accept = 1 - importance_weight
             r = np.random.uniform(0, 1)
             if r < self.forced_refresh or r < p_accept:
@@ -483,7 +527,6 @@ class Algorithm(object):
                 new_seeds = torch.cat([new_seeds, seed])
             else:
                 n_rejected += 1
-        print(" | " + str(len(reused_seeds)), end='')
         return new_seeds, reused_seeds, reused_ids, n_rejected
 
     def adaptation_sampling_learning_rate_update(self, returns, seeds, current_pdf_pars, update_ids):
@@ -538,8 +581,9 @@ class Algorithm(object):
                 sample = self.generate_sample(seeds[i], potn_mean, curr_sigma)
                 potn_mean, curr_sigma = self._modelrepr2vec(potn_mean), self._modelrepr2vec(curr_sigma)
                 # Compute importance weight
-                importance_weights.append(np.exp(self.diagonal_gaussian_pdf(sample, potn_mean, curr_sigma) - self.diagonal_gaussian_pdf(sample, curr_mean, curr_sigma)))
-            IPython.embed()
+                importance_weight = self.compute_pseudo_importance_weight(sample, potn_mean, curr_sigma, curr_mean, curr_sigma)[0]
+                # iw = self.compute_importance_weight(sample, potn_mean, curr_sigma, curr_mean, curr_sigma)
+                importance_weights.append(importance_weight)
             
             importance_weights = np.array(importance_weights)
             unit_weights = np.array([1] * len(importance_weights))
@@ -613,12 +657,13 @@ class Algorithm(object):
         s += "Safe mutation         {:s}\n".format(safe_mutation)
         s += "Antithetic sampling   {:s}\n".format(str(not self.no_antithetic))
         s += "Adaptation sampling   {:s}\n".format(str(self.adaptation_sampling))
-        s += "Forced refresh (IS)   {:f}\n".format(self.forced_refresh)
-        s += "CUDA                  {:s}\n".format(str(self.cuda))
+        s += "Importance sampling   {:f}\n".format(self.forced_refresh)
+        s += "Common random numbers {:s}\n".format(str(self.common_random_numbers))
         s += "Workers               {:d}\n".format(self.workers)
         s += "Validation interval   {:d}\n".format(self.val_every)
         s += "Checkpoint interval   {:d}s\n".format(self.chkpt_int)
         s += "Checkpoint directory  {:s}\n".format(self.chkpt_dir)
+        s += "CUDA                  {:s}\n".format(str(self.cuda))
         if self.chkpt_dir is not None:
             with open(os.path.join(self.chkpt_dir, 'init.log'), 'a') as f:
                 f.write(s)
@@ -832,6 +877,11 @@ class StochasticGradientEstimation(Algorithm):
         return self.eval_fun(model, self.env, seed, **kwargs)
 
     def train(self):
+        def draw_seeds(n):
+            seeds = torch.LongTensor(n).random_()
+            if not self.no_antithetic: seeds = torch.cat([seeds, -seeds])
+            return seeds
+        
         # Initialize
         # TODO Maybe possible to move to abstract class either in train method or as distinct methods (e.g. init_train)
         self.print_init()
@@ -858,6 +908,7 @@ class StochasticGradientEstimation(Algorithm):
         # eval_kwargs_unp = {'max_episode_length': self.batch_size, 'collect_inputs': hasattr(self.env, 'env'), 'chunksize': chunksize}
         eval_kwargs_unp = {'max_episode_length': self.batch_size, 'collect_inputs': hasattr(self.env, 'env') * self.batch_size, 'chunksize': chunksize}
 
+        # Get initial sensitivities if reinforcement learning
         if hasattr(self.env, 'env'):
             unperturbed_out = self.eval_fun(self.model, self.env, 42, **eval_kwargs_unp)
             self.sens_inputs = torch.from_numpy(unperturbed_out['inputs'])
@@ -869,6 +920,7 @@ class StochasticGradientEstimation(Algorithm):
         current_sigma = self._beta2sigma(self.beta.data)
         reused_return = np.array([]).astype('float32')
         reused_seeds = torch.LongTensor()
+        n_rejected = 0
 
         # Start training loop
         for n_generation in range(start_generation, self.max_generations):
@@ -876,20 +928,105 @@ class StochasticGradientEstimation(Algorithm):
             self.compute_sensitivities()
 
             # Generate random seeds
-            if 'seeds' in locals() and self.forced_refresh < 1.0: # False:  #
+            if self.forced_refresh == 0:
+                # Regular sampling
+                seeds = draw_seeds(int(self.perturbations/((not self.no_antithetic) + 1)))
+                assert len(seeds) == self.perturbations, 'Number of created seeds is not equal to wanted perturbations'
+            elif 'seeds' in locals() and 0.0 < self.forced_refresh < 1.0:
                 # Importance mixing
                 if 'reused_ids' in locals():
                     rids = list(reused_ids)
                 seeds, reused_seeds, reused_ids, n_rejected = self.importance_mixing(seeds, (current_weights, current_sigma), (previous_weights, previous_sigma))
+                print(" | RU " + str(len(reused_seeds)), end='')
+                if 'rids' in locals():
+                    print(' | 2RU ' + str(np.sum(np.array(rids) == np.array(reused_ids))), end='')
+                print(" | RJ " + str(n_rejected), end='')
+            elif 'seeds' in locals() and isint(self.forced_refresh) and self.forced_refresh >= 0:
+                if 'reused_ids' in locals():
+                    rids = list(reused_ids)
+                # # Percentile
+                # percentile = np.percentile(workers_out['return'], 99)
+                # reused_ids = np.where(workers_out['return'] > percentile)[0]
+                # reused_seeds = seeds[reused_ids.tolist()]
+                # reused_return = workers_out['return'][reused_ids]
+
+                # # Better than unperturbed
+                # return_unp = unperturbed_out['return']
+                # reused_ids = np.where(workers_out['return'] > return_unp)[0]
+                # reused_seeds = seeds[reused_ids.tolist()]
+                # reused_return = workers_out['return'][reused_ids]
+
+                # # Using percentile of those better than unperturbed
+                # return_unp = unperturbed_out['return']
+                # percentile = np.percentile(workers_out['return'], 90)
+                # reused_ids = np.where(np.logical_and(workers_out['return'] > return_unp, workers_out['return'] > percentile))[0]
+                # reused_seeds = seeds[reused_ids.tolist()] if reused_ids.tolist() else torch.LongTensor([])
+                # reused_return = workers_out['return'][reused_ids]
+                
+                # # Using 2%-tile worst and best
+                # percentile = np.percentile(workers_out['return'], 98)
+                # reused_ids = workers_out['return'] > percentile
+                # percentile = np.percentile(workers_out['return'], 2)
+                # reused_ids = np.where(np.logical_or(reused_ids, workers_out['return'] < percentile))[0]
+                # reused_seeds = seeds[reused_ids.tolist()]
+                # reused_return = workers_out['return'][reused_ids]
+
+                # Random reuse
+                n_reused = int(self.perturbations) - int(self.forced_refresh)
+                reused_ids = np.random.randint(0, self.perturbations, size=n_reused)
+                reused_seeds = seeds[reused_ids.tolist()] if reused_ids.tolist() else torch.LongTensor([])
                 reused_return = workers_out['return'][reused_ids]
+
+                # Regular sampling of the new seeds
+                seeds = draw_seeds(int(self.perturbations/((not self.no_antithetic) + 1)))
+                print(" | RU " + str(len(reused_seeds)), end='')
                 if 'rids' in locals():
                     print('| 2RU ' + str(np.sum(np.array(rids) == np.array(reused_ids))), end='')
             else:
-                # Regular sampling the first time
-                n_rejected = 0
-                seeds = torch.LongTensor(int(self.perturbations/((not self.no_antithetic) + 1))).random_()
-                if not self.no_antithetic: seeds = torch.cat([seeds, -seeds])
-                assert len(seeds) == self.perturbations, 'Number of created seeds is not equal to wanted perturbations'
+                # Online updated linear basis function model on samples (i.e. seen network weights) with objective function as target
+                if 'seeds' in locals():
+                    # Standard (MSE)
+                    # w = w + eta * (t_n - w' * phi_n) * phi_n
+                    MSE = 0
+                    for r, s in zip(workers_out['return'], seeds):
+                        network_weights = self.generate_sample(s, self._modelrepr2vec(current_weights), current_sigma)
+                        network_weights.apply_(LBF_basis_fcn)
+                        network_weights = torch.cat([network_weights, torch.FloatTensor([1])])
+                        prediction = LBF_weights @ network_weights
+                        LBF_weights += LBF_eta * (r - prediction) * network_weights
+                        MSE += (r - prediction) ** 2
+                    MSE /= 2
+                    print(' | LBF_MSE {:4.2f}'.format(MSE), end='')
+
+                    prediction = LBF_weights @ torch.cat([self._modelrepr2vec(current_weights).apply_(LBF_basis_fcn), torch.FloatTensor([1])])
+                    print(' | LBF_Pr {:4.2f}'.format(prediction), end='')
+
+                    # Regularized (MSE)
+                    # w = w + eta * (t_n - w' * phi_n) * phi_n + lambda * w
+
+                    n_rejected = 0
+                    seeds = torch.LongTensor(int(self.perturbations/((not self.no_antithetic) + 1))).random_()
+                    if not self.no_antithetic: seeds = torch.cat([seeds, -seeds])
+                    assert len(seeds) == self.perturbations, 'Number of created seeds is not equal to wanted perturbations'
+
+                else:
+                    # First time
+                    LBF_n_weights = self.model.count_parameters(only_trainable=True) + 1
+                    LBF_weights = torch.FloatTensor(LBF_n_weights).normal_()
+                    LBF_s = 1
+                    LBF_basis_fcn = lambda x: np.exp(- x**2 / 2) # (2 * LBF_s**2))
+                    LBF_eta = 1e-7
+
+                    n_rejected = 0
+                    seeds = torch.LongTensor(int(self.perturbations/((not self.no_antithetic) + 1))).random_()
+                    if not self.no_antithetic: seeds = torch.cat([seeds, -seeds])
+                    assert len(seeds) == self.perturbations, 'Number of created seeds is not equal to wanted perturbations'
+
+            # Get master seed for Common Random Numbers
+            if self.common_random_numbers:
+                eval_kwargs['mseed'] = draw_seeds(1)[0]
+                eval_kwargs_unp['mseed'] = eval_kwargs['mseed']
+            # unperturbed_out = self.eval_fun(self.model, self.env, 42, **eval_kwargs_unp)
 
             # Evaluate perturbations
             workers_start_time = time.time()
@@ -939,8 +1076,8 @@ class StochasticGradientEstimation(Algorithm):
             assert (seeds == workers_out['seed']).all(), 'The generated seeds must be the same as those returned by workers (plus reused seeds)'
             workers_out['return'] = np.append(workers_out['return'], reused_return)  # Order is important (resampling combined with returns later)
             workers_out['seed'] = torch.cat([workers_out['seed'], reused_seeds])  # Order is important (resampling combined with returns later)
-            # seeds = torch.cat([seeds, torch.LongTensor(reused_seeds)])  # Order is not important here
-            assert self.perturbations <= len(workers_out['seed']) <= self.perturbations + 1
+            seeds = torch.cat([seeds, torch.LongTensor(reused_seeds)])  # Order is important (resampling combined with returns later)
+            # assert self.perturbations <= len(workers_out['seed']) <= self.perturbations + 1
             
             # Shaping, rank and compute gradients
             rank = self.unperturbed_rank(workers_out['return'], unperturbed_out['return'])
@@ -1255,8 +1392,13 @@ class sES(StochasticGradientEstimation):
         torch.cuda.manual_seed(abs(seed))
         if self.optimize_sigma in [None, 'single']:
             for p, pp, sens in zip_longest(self.model.parameters(), perturbed_model.parameters(), self.sensitivities):
-                eps = self.get_perturbation(p.size(), sensitivities=sens)
-                pp.data += sign * self.sigma * eps
+                eps = sign * self.get_perturbation(p.size(), sensitivities=sens)
+                pp.data += self.sigma * eps
+            # print("Perturb model")
+            # print(type(seed))
+            # print(type(sign))
+            # print(seed)
+            # print(eps) # REMOVE
         elif self.optimize_sigma == 'per-layer':
             for layer, (p, pp, sens) in enumerate(zip_longest(self.model.parameters(), perturbed_model.parameters(), self.sensitivities)):
                 eps = self.get_perturbation(p.size(), sensitivities=sens)
