@@ -83,17 +83,8 @@ def get_longest_sublists(l):
 
 
 def length_of_longest(l):
-    """Recursively find length of longest list in list of lists.
-    
-    Args:
-        l (list): List of lists
-    
-    Returns:
-        int: Length of longest sublist
-    """
-    if not isinstance(l, list) and not isinstance(l, range):
-        return 0
-    return max([len(l)] + [len(subl) for subl in l if isinstance(subl, list) or isinstance(subl, range)] + [length_of_longest(subl) for subl in l])
+    lengths = [len(l_i) for l_i in l]
+    return max(lengths)
 
 
 def get_inputs_from_dict_class(c, d, recursive=False):
@@ -213,6 +204,24 @@ def list_of_dicts_to_dict_of_lists(ld):
 
 def dict_of_lists_to_list_of_dicts(dl):
     return [dict(zip(dl,t)) for t in zip(*dl.values())]
+
+
+def get_indices_of_A_in_B(A, B):
+    """Return the set of indices into B of the elements in A that occur in B
+    
+    Parameters
+    ----------
+    A : list
+        The "needles"
+    B : list
+        The "haystack"
+    Returns
+    -------
+    list
+        Indices into B of elements in A occuring in B
+    """
+    s = set(B)
+    return [i for i, e in enumerate(A) if e in s]
 
 
 def total_size(o, handlers={}, verbose=False):

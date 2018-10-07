@@ -13,7 +13,8 @@ import torch
 from cycler import cycler
 
 from utils.misc import get_longest_sublists
-from utils.data_analysis import lookup_labels
+from utils.data_analysis import lookup_label
+
 
 def moving_average(y, window=100, center=True):
     """
@@ -38,7 +39,10 @@ def remove_duplicate_labels(ax):
     ax.legend(handles, labels)
 
 
-def timeseries(xdatas, ydatas, xlabel, ylabel, plotlabels=None, figsize=(6.4, 4.8)):
+def timeseries(xdatas, ydatas, xlabel, ylabel, plotlabels=None, figsize=(6.4, 4.8), map_labels=False):
+    if map_labels:
+        xlabel = lookup_label(xlabel, mode=map_labels)
+        plotlabels = [lookup_label(plotlabel, mode=map_labels) for plotlabel in plotlabels]
     if plotlabels is None:
         plotlabels = [None]*len(xdatas)
     fig = plt.figure(figsize=figsize)
@@ -55,7 +59,10 @@ def timeseries(xdatas, ydatas, xlabel, ylabel, plotlabels=None, figsize=(6.4, 4.
     plt.ylabel(ylabel)
 
 
-def timeseries_distribution(xdatas, ydatas, xlabel, ylabel, xbins=100, ybins=100, figsize=(6.4, 4.8)):
+def timeseries_distribution(xdatas, ydatas, xlabel, ylabel, xbins=100, ybins=100, figsize=(6.4, 4.8), map_labels=False):
+    if map_labels:
+        xlabel = lookup_label(xlabel, mode=map_labels)
+        ylabel = lookup_label(ylabel, mode=map_labels)
     plt.rcParams['image.cmap'] = 'viridis'
     # Get x and y edges spanning all values
     maxx = max([max(xdata) for xdata in xdatas])
@@ -84,7 +91,10 @@ def timeseries_distribution(xdatas, ydatas, xlabel, ylabel, xbins=100, ybins=100
     plt.ylabel(ylabel)
 
 
-def timeseries_median(xdatas, ydatas, xlabel, ylabel, figsize=(6.4, 4.8)):
+def timeseries_median(xdatas, ydatas, xlabel, ylabel, figsize=(6.4, 4.8), map_labels=False):
+    if map_labels:
+        xlabel = lookup_label(xlabel, mode=map_labels)
+        ylabel = lookup_label(ylabel, mode=map_labels)
     length = len(sorted(ydatas, key=len, reverse=True)[0])
     ydata = []
     for i in range(len(ydatas)):
@@ -104,7 +114,9 @@ def timeseries_median(xdatas, ydatas, xlabel, ylabel, figsize=(6.4, 4.8)):
     plt.legend(handles=h, loc='best')
 
 
-def timeseries_final_distribution(datas, label, ybins='auto', figsize=(6.4, 4.8)):
+def timeseries_final_distribution(datas, label, ybins='auto', figsize=(6.4, 4.8), map_labels=False):
+    if map_labels:
+        label = lookup_label(label, mode=map_labels)
     datas_final = [ydata[-1] for ydata in datas]
     fig, ax = plt.subplots(figsize=figsize)
     ax.hist(datas_final, bins=ybins)
@@ -112,8 +124,11 @@ def timeseries_final_distribution(datas, label, ybins='auto', figsize=(6.4, 4.8)
     plt.ylabel('Counts')
 
 
-def timeseries_mean_grouped(xdatas, ydatas, groups, xlabel, ylabel, figsize=(6.4, 4.8), points_in_plot=200, lookup_labels=False):
+def timeseries_mean_grouped(xdatas, ydatas, groups, xlabel, ylabel, figsize=(6.4, 4.8), points_in_plot=200, map_labels=False):
     assert type(groups) == np.ndarray
+    if map_labels:
+        xlabel = lookup_label(xlabel, mode=map_labels)
+        ylabel = lookup_label(ylabel, mode=map_labels)
     sns.set(color_codes=True)
     plt.figure(figsize=figsize)
     legend = []
@@ -163,7 +178,7 @@ def load_stats(stats_file):
     return stats
 
 
-def plot_stats(stats_file, chkpt_dir, wide_figure=True):
+def plot_stats(stats_file, chkpt_dir, wide_figure=True, map_labels=False):
     """
     Plots training statistics
     - Unperturbed return
@@ -250,6 +265,8 @@ def plot_stats(stats_file, chkpt_dir, wide_figure=True):
                 stats[c + '_ma'].plot(ax=ax, linestyle='-', label='_nolegend_')
                 # ax.legend(loc='best')
             plt.xlabel('Iteration')
+            if map_labels:
+                c = lookup_label(c, mode=map_labels)
             plt.ylabel(c)
             fig.savefig(os.path.join(chkpt_dir, c + '.pdf'), bbox_inches='tight')
             plt.close(fig)

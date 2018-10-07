@@ -98,7 +98,7 @@ class Algorithm(object):
         # Attributes to exclude from the state dictionary
         self.exclude_from_state_dict = {'env', 'optimizer', 'lr_scheduler', 'model', 'stats', 'sens_inputs'}
         # Initialize dict for saving statistics
-        self._base_stat_keys = {'generations', 'walltimes', 'workertimes', 'unp_rank', 'n_reused', 'n_rejected'}
+        self._base_stat_keys = {'generations', 'walltimes', 'workertimes', 'unp_rank', 'n_reused', 'n_rejected', 'grad_norm', 'param_norm'}
         self.stats = {key: [] for key in self._base_stat_keys}
         self._training_start_time = None
 
@@ -776,6 +776,8 @@ class Algorithm(object):
         self.stats['unp_rank'].append(rank)
         self.stats['n_reused'].append(n_reused)
         self.stats['n_rejected'].append(n_rejected)
+        self.stats['grad_norm'].append(self.model.gradient_norm())
+        self.stats['param_norm'].append(self.model.parameter_norm())
         for i, lr in enumerate(self.lr_scheduler.get_lr()):
             self.stats['lr_' + str(i)].append(lr)
         for k, v in workers_out.items():
@@ -914,10 +916,10 @@ class StochasticGradientEstimation(Algorithm):
             self.sens_inputs = torch.from_numpy(unperturbed_out['inputs'])
 
         # Importance sampling initialization
-        current_weights = []
-        for p in self.model.parameters():
-            current_weights.append(p.data.clone())
-        current_sigma = self._beta2sigma(self.beta.data)
+        # current_weights = []
+        # for p in self.model.parameters():
+        #     current_weights.append(p.data.clone())
+        # current_sigma = self._beta2sigma(self.beta.data)
         reused_return = np.array([]).astype('float32')
         reused_seeds = torch.LongTensor()
         n_rejected = 0
@@ -1098,12 +1100,12 @@ class StochasticGradientEstimation(Algorithm):
                 self.lr_scheduler.step()
 
             # Update previous and current weights (importance mixing)
-            previous_weights = list(current_weights)
-            previous_sigma = current_sigma.clone()
-            current_weights = []
-            for p in self.model.parameters():
-                current_weights.append(p.data.clone())
-            current_sigma = self._beta2sigma(self.beta.data)
+            # previous_weights = list(current_weights)
+            # previous_sigma = current_sigma.clone()
+            # current_weights = []
+            # for p in self.model.parameters():
+            #     current_weights.append(p.data.clone())
+            # current_sigma = self._beta2sigma(self.beta.data)
 
             # Keep track of best model
             if unperturbed_out['return'] >= max_unperturbed_return:
@@ -1144,7 +1146,7 @@ class ES(StochasticGradientEstimation):
             beta_val = self._sigma2beta(sigma)
             lr = cov_lr if cov_lr else self.lr_scheduler.get_lr()[0]
             beta_par = {'label': '_beta', 'params': Variable(torch.Tensor([beta_val]), requires_grad=True),
-                        'lr': lr, 'weight_decay': 0, 'momentum': 0.9}
+                        'lr': lr, 'weight_decay': 0, 'momentum': 0.9, 'dampening': 0.9}
             self._beta = self._add_parameter_to_optimize(beta_par)
         # Add learning rates to stats
         for i, _ in enumerate(self.lr_scheduler.get_lr()):
@@ -1340,7 +1342,7 @@ class sES(StochasticGradientEstimation):
             else:
                 lr = self.lr_scheduler.get_lr()[0]
             beta_par = {'label': '_beta', 'params': Variable(beta_tensor, requires_grad=True),
-                        'lr': lr, 'weight_decay': 0, 'momentum': 0.9}
+                        'lr': lr, 'weight_decay': 0, 'momentum': 0.9, 'dampening': 0.9}
             self._beta = self._add_parameter_to_optimize(beta_par)
         self.sigma = self._beta2sigma(self.beta.data)
         # Add learning rates to stats
@@ -1549,7 +1551,7 @@ class sNES(sES):
             sign = np.sign(seeds[i])
             torch.manual_seed(abs(seeds[i]))
             torch.cuda.manual_seed(abs(seeds[i]))
-            # i = 0 
+            j = 0 
             for layer, param in enumerate(self.model.parameters()):
                 eps = self.get_perturbation(param.size(), sensitivities=self.sensitivities[layer], cuda=self.cuda)
                 if not self.optimize_sigma:
@@ -1561,10 +1563,10 @@ class sNES(sES):
                     weight_gradients[layer] += self._weight_update_scale * self.sigma[layer] * (sign * retrn * eps) / self.perturbations
                     beta_gradients[layer] += retrn * (eps.pow(2).sum() - eps.numel()) / self.perturbations
                 elif self.optimize_sigma == 'per-weight':
-                    j = i + param.numel()
-                    weight_gradients[layer] += self._weight_update_scale * self.sigma[i:j].view(weight_gradients[layer].size()) * (sign * retrn * eps) / self.perturbations
-                    beta_gradients[i:j] += retrn * (eps.view(-1).pow(2) - 1) / self.perturbations
-                    i = j
+                    k = j + param.numel()
+                    weight_gradients[layer] += self._weight_update_scale * self.sigma[j:k].view(weight_gradients[layer].size()) * (sign * retrn * eps) / self.perturbations
+                    beta_gradients[j:k] += retrn * (eps.view(-1).pow(2) - 1) / self.perturbations
+                    j = k
 
         # Set gradients
         self.optimizer.zero_grad()

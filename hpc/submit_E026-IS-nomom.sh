@@ -62,10 +62,11 @@ ID="E026-IS"
 COMMON_IN="--id ${ID} --workers ${CORES} --algorithm sNES --optimize-sigma None --env-name MNIST --model MNISTNet --optimizer SGD --lr 0.05 --cov-lr 0.05 --max-generations 1000 --batch-size 1000 --safe-mutation SUM --chkpt-int 1200 --lr-scheduler ExponentialLR --gamma 1"
 declare -a INPUTS=(
 					"$COMMON_IN --forced-refresh 0.01 --momentum 0"
+					"$COMMON_IN --forced-refresh 0.01 --momentum 0.9"
 					"$COMMON_IN --forced-refresh 0.1 --momentum 0"
 					"$COMMON_IN --forced-refresh 0.8 --momentum 0"
 					"$COMMON_IN --forced-refresh 1.0 --momentum 0"  # No importance mixing
-					"$COMMON_IN --forced-refresh 1.0"  # No importance mixing
+					"$COMMON_IN --forced-refresh 1.0 --momentum 0.9"  # No importance mixing
 				   )
 SCRIPT="run_hpc.sh"
 REPEATS=30

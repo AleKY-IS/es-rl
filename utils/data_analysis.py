@@ -98,15 +98,20 @@ def get_checkpoint_directories(dir):
     return [os.path.join(dir, di) for di in os.listdir(dir) if os.path.isdir(os.path.join(dir, di)) and di != 'monitoring']
 
 
-def lookup_labels(key, mode='supervised'):
+def lookup_label(key, mode='supervised'):
     """Mode can be supervised and reinforcement"""
+    xkeys2labels = {'generations': 'Iteration',
+                     'walltimes': 'Wall time',
+                     }
     if mode is 'supervised':
         key2label = {'return_unp': 'Unperturbed model NLL',
+                     'return_val': 'Unperturbed model NLL',
                      'return_max': 'Population max NLL',
                      'return_min': 'Population minimum NLL',
                      'return_avg': 'Population average NLL',
                      'return_var': 'Population NLL variance',
                      'accuracy_unp': 'Unperturbed model accuracy',
+                     'accuracy_val': 'Unperturbed model accuracy',
                      'accuracy_max': 'Population max accuracy',
                      'accuracy_min': 'Population minimum accuracy',
                      'accuracy_avg': 'Population average accuracy',
@@ -117,4 +122,8 @@ def lookup_labels(key, mode='supervised'):
                      'return_min': 'Population minimum reward',
                      'return_avg': 'Population average reward',
                      'return_var': 'Population reward variance'}
-    return key2label[key]
+    key2label.update(xkeys2labels)
+    if key in key2label:
+        return key2label[key]
+    else:
+        return key

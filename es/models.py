@@ -65,6 +65,24 @@ class AbstractESModel(nn.Module):
     """Abstract models class for models that are trained by evolutionary methods.
     It has methods for counting parameters, layers and tensors.
     """
+    
+    def parameter_norm(self):
+        parameter_norm = 0
+        for p in self.parameters():
+            parameter_norm += (p.data.view(-1) @ p.data.view(-1))
+        parameter_norm = np.sqrt(parameter_norm)
+        return parameter_norm
+
+    def gradient_norm(self):
+        gradient_norm = 0
+        for p in self.parameters():
+            if p.grad is None:
+                gradient_norm = None
+                break
+            gradient_norm += (p.grad.data.view(-1) @ p.grad.data.view(-1))
+        gradient_norm = np.sqrt(gradient_norm)
+        return gradient_norm
+    
     @property
     def summary(self):
         if not hasattr(self, '_summary'):

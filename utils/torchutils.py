@@ -15,10 +15,11 @@ def get_names_dict(model):
     Recursive walk to get names including path
     """
     names = {}
+
     def _get_names(module, parent_name=''):
         for key, module in module.named_children():
             name = parent_name + '.' + key if parent_name else key
-            names[name]=module
+            names[name] = module
             if isinstance(module, torch.nn.Module):
                 _get_names(module, parent_name=name)
     _get_names(model)
@@ -196,7 +197,6 @@ def dataset_mean_and_var(dataset):
         >> dataset = datasets.CIFAR10(data_dir, train=True, download=True, transform=transforms.Compose([transforms.ToTensor(), transforms.Normalize(mean, std)]))
     """
 
-
     def parallel_variance(avg_a, var_a, count_a, avg_b, var_b, count_b):
         """Method for online updating an sample mean and variance given a new set of observations.
         
@@ -228,7 +228,7 @@ def dataset_mean_and_var(dataset):
         var_x = M2_x / (count_a + count_b - 1)
         avg_x = count_a / count_x * avg_a + count_b / count_x * avg_b
         return avg_x, var_x
-    
+
     # Image data
     if dataset.__class__ in [MNIST, FashionMNIST, CIFAR10, CIFAR100]:
         # Get example dimensions

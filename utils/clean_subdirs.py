@@ -26,7 +26,7 @@ if __name__ == '__main__':
         package_root_this_file = fs.get_parent(this_file_dir_local, 'es-rl')
         args.d = os.path.join(package_root_this_file, 'experiments', 'checkpoints')
     if args.f is None:
-        args.keep = ['state-dict-algorithm.pkl', 'stats.csv', 'init.log']
+        args.keep = ['state-dict-algorithm.pkl', 'stats.csv', 'init.log', 'test.log']
         args.delete = []
     assert args.d is not None and args.delete is not None
 
@@ -34,6 +34,8 @@ if __name__ == '__main__':
     for root, directories, filenames in os.walk(args.d):
         i = 0
         for filename in filenames:
+            if 'analysis' in root:
+                continue
             if filename in args.delete:
                 os.remove(os.path.join(root, filename))
                 i += 1

@@ -14,17 +14,17 @@ parser.add_argument('--batch-size', type=int, default=64, metavar='N',
                     help='input batch size for training (default: 64)')
 parser.add_argument('--test-batch-size', type=int, default=1000, metavar='N',
                     help='input batch size for testing (default: 1000)')
-parser.add_argument('--epochs', type=int, default=10, metavar='N',
+parser.add_argument('--epochs', type=int, default=2, metavar='N',
                     help='number of epochs to train (default: 10)')
-parser.add_argument('--lr', type=float, default=0.01, metavar='LR',
+parser.add_argument('--lr', type=float, default=0.005, metavar='LR',
                     help='learning rate (default: 0.01)')
-parser.add_argument('--momentum', type=float, default=0.5, metavar='M',
+parser.add_argument('--momentum', type=float, default=0.9, metavar='M',
                     help='SGD momentum (default: 0.5)')
 parser.add_argument('--no-cuda', action='store_true', default=False,
                     help='disables CUDA training')
 parser.add_argument('--seed', type=int, default=1, metavar='S',
                     help='random seed (default: 1)')
-parser.add_argument('--log-interval', type=int, default=10, metavar='N',
+parser.add_argument('--log-interval', type=int, default=100, metavar='N',
                     help='how many batches to wait before logging training status')
 args = parser.parse_args()
 args.cuda = not args.no_cuda and torch.cuda.is_available()
@@ -54,25 +54,32 @@ class Net(nn.Module):
         super(Net, self).__init__()
         self.conv1 = nn.Conv2d(1, 10, kernel_size=(5, 5))
         self.conv1_bn = nn.BatchNorm2d(10)
+        self.conv1_pool = nn.MaxPool2d(kernel_size=(2, 2), stride=None, padding=0, dilation=1, return_indices=False, ceil_mode=False)
+        self.conv1_relu = nn.ReLU()
         self.conv2 = nn.Conv2d(10, 20, kernel_size=(5, 5))
         self.conv2_bn = nn.BatchNorm2d(20)
-        self.conv2_drop = nn.Dropout2d()
+        self.conv2_pool = nn.MaxPool2d(kernel_size=(2, 2), stride=None, padding=0, dilation=1, return_indices=False, ceil_mode=False)
+        self.conv2_relu = nn.ReLU()
         self.fc1 = nn.Linear(320, 50)
+        self.fc1_bn = nn.BatchNorm1d(50)
+        self.fc1_relu = nn.ReLU()
         self.fc2 = nn.Linear(50, 10)
+        self.fc2_logsoftmax = nn.LogSoftmax(dim=1)
 
     def forward(self, x):
-        x = self.conv1_bn(F.relu(F.max_pool2d(self.conv1(x), 2)))
-        x = self.conv2_drop(self.conv2_bn(F.relu(F.max_pool2d(self.conv2(x), 2))))
+        x = self.conv1_relu(self.conv1_pool(self.conv1_bn(self.conv1(x))))
+        x = self.conv2_relu(self.conv2_pool(self.conv2_bn(self.conv2(x))))
         x = x.view(-1, 320)
-        x = F.relu(F.dropout(self.fc1(x), training=self.training))
-        x = F.log_softmax(self.fc2(x), dim=1)
+        x = self.fc1_relu(self.fc1_bn(self.fc1(x)))
+        x = self.fc2_logsoftmax(self.fc2(x))
         return x
 
 model = Net()
 if args.cuda:
     model.cuda()
 
-optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
+optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, dampening=0)
+# optimizer = optim.Adam(model.parameters(), lr=args.lr)
 
 
 def train(epoch):
@@ -115,3 +122,4 @@ for epoch in range(1, args.epochs + 1):
     test()
     train(epoch)
     torch.save(model.state_dict(), 'latest.state')
+test()
